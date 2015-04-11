@@ -7,7 +7,7 @@ __host__
 void copyLayerDeviceToHost(Layer *unitLater);
 
 __host__
-void allocateLayer(Layer *newLayer, int N_units);
+void allocateLayer(Layer *newLayer, int N_units, int kSamples);
 
 __host__
 void freeLayer(Layer newLayer);

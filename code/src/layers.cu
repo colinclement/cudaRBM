@@ -6,8 +6,8 @@
 
 __host__
 void copyLayerDeviceToHost(Layer *unitLayer){
-    checkCudaErrors(cudaMemcpy(unitLayer->h_sample, unitLayer->d_sample, 
-	            unitLayer->BYTES, cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(unitLayer->h_samples, unitLayer->d_samples, 
+	            unitLayer->SAMPLEBYTES, cudaMemcpyDeviceToHost));
     checkCudaErrors(cudaMemcpy(unitLayer->h_conditionalP, unitLayer->d_conditionalP, 
 	            unitLayer->BYTES, cudaMemcpyDeviceToHost));
     checkCudaErrors(cudaMemcpy(unitLayer->h_energySum, unitLayer->d_energySum, 
@@ -16,19 +16,24 @@ void copyLayerDeviceToHost(Layer *unitLayer){
 
 
 __host__
-void allocateLayer(Layer *newLayer, int N_units){
+void allocateLayer(Layer *newLayer, int N_units, int kSamples){
     int BYTES = N_units * sizeof(float);
     newLayer->BYTES = BYTES;
+    newLayer->SAMPLEBYTES = BYTES * kSamples;
     newLayer->N_units = N_units;
-    newLayer->h_sample = (float *)malloc(BYTES);
-    memset(newLayer->h_sample, 0, BYTES);
+    newLayer->kSamples = kSamples;
+    newLayer->h_samples = (float *)malloc(BYTES * kSamples);
+    memset(newLayer->h_samples, 0, BYTES * kSamples);
     newLayer->h_conditionalP = (float *)malloc(BYTES);
     memset(newLayer->h_conditionalP, 0, BYTES);
     newLayer->h_energySum = (float *)malloc(BYTES);
     memset(newLayer->h_energySum, 0, BYTES);
   
-    checkCudaErrors(cudaMalloc((void **)&(newLayer->d_sample), BYTES));
-    checkCudaErrors(cudaMemset(newLayer->d_sample, 0, BYTES));
+    checkCudaErrors(cudaMalloc((void **)&(newLayer->d_samples), newLayer->SAMPLEBYTES));
+    checkCudaErrors(cudaMemset(newLayer->d_samples, 0, newLayer->SAMPLEBYTES));
+
+    newLayer->d_samplePtr = newLayer->d_samples; //Start ptr at beginning
+
     checkCudaErrors(cudaMalloc((void **)&(newLayer->d_conditionalP), BYTES));
     checkCudaErrors(cudaMemset(newLayer->d_conditionalP, 0, BYTES));
     checkCudaErrors(cudaMalloc((void **)&(newLayer->d_energySum), BYTES));
@@ -37,8 +42,8 @@ void allocateLayer(Layer *newLayer, int N_units){
 
 __host__
 void freeLayer(Layer newLayer){
-    free(newLayer.h_sample); newLayer.h_sample=NULL;
-    cudaFree(newLayer.d_sample); newLayer.d_sample=NULL;
+    free(newLayer.h_samples); newLayer.h_samples=NULL;
+    cudaFree(newLayer.d_samples); newLayer.d_samples=NULL;
     free(newLayer.h_conditionalP); newLayer.h_conditionalP=NULL;
     cudaFree(newLayer.d_conditionalP); newLayer.d_conditionalP=NULL;
     free(newLayer.h_energySum); newLayer.h_energySum=NULL;
