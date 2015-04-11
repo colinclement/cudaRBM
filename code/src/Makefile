@@ -10,9 +10,12 @@ LIBS=-lcurand -lcublas
 GPUOBJS=main.o layers.o sampleCorrelate.o
 OBJS=loadSpins.o
 
-default: all
+#debug: FLAGS += -DDBUG -DDBUG_LOAD -DDBUG_GIBBS -DDBUG_K -g -G
+#debug: main
 
-all: $(OBJS) $(GPUOBJS)
+default: main
+
+main: $(OBJS) $(GPUOBJS)
 	$(NVCC) $(FLAGS) -o $(EXE) $(OBJS) $(GPUOBJS) $(INC) $(LIBS)
 
 loadSpins.o: loadSpins.cc
