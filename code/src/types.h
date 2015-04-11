@@ -2,11 +2,22 @@
 #define __TYPES_H__
 
 typedef struct {
-    float *h_sample, *d_sample;
-    float *h_conditionalP, *d_conditionalP;
-    float *h_energySum, *d_energySum;
     int N_units;
+    
+    float *h_samples, *d_samples;
+    // Store all K samples
+    float *d_samplePtr; 
+    //Move pointer along during sampling
     int BYTES;
+    int SAMPLEBYTES;
+    //Size of one sample and all samples
+    int kSamples; //k
+    //Number of K samples
+    
+    float *h_conditionalP, *d_conditionalP;
+    //Conditional probabilities
+    float *h_energySum, *d_energySum;
+    //Partial energy
 } Layer;
 
 #endif
