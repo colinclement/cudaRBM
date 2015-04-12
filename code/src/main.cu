@@ -15,8 +15,7 @@
 #include "workingMemory.h"
 #include "types.h"
 
-#define DBUG
-#define DBUG_LOAD
+//#define DBUG //Save stuff to files
 
 #ifndef MIN
 #define MIN(a, b) ((a > b) ? b : a)
@@ -26,6 +25,13 @@
 #endif
 #define IDX2F(i,j,ld) (((j)*(ld))+(i))
 
+#define THREADS_PER 64
+
+__global__
+void weightMatrixUpdate(float *d_W, float *d_modelCorrelations,
+		        float *d_dataCorrelations, 
+			float lr, float mom, float sparsity,
+			int N_h, int N_v);
 
 int main(int argc, char **argv){
 
@@ -37,51 +43,42 @@ int main(int argc, char **argv){
     }
     int dev = 0; 
     cudaSetDevice(dev);
+    
     const char *printMSG = "Incorrect number of arguments: Usage: \n\
-			    ./curbm filename N_visible N_hidden k_samples batchsize\n";
-    if (argc < 6){
+			    ./curbm filename N_visible N_hidden k_samples batchsize epochs lr mom sparsity\n";
+    if (argc < 10){
         printf("%s", printMSG);
 	return 0;
     }
-    else if (argc > 6){
+    else if (argc > 10){
         printf("%s", printMSG);
         return 0;
     }
+
     char *filename = argv[1];
     int N_v = atoi(argv[2]);
     int N_h = atoi(argv[3]);
     int k = atoi(argv[4]);
     int batchSize = atoi(argv[5]);
+    int epochs = atoi(argv[6]);
+    float lr = atof(argv[7]);
+    float mom = atof(argv[8]);
+    float sparsity = atof(argv[9]);
   
-    int Nbits = 0;//, numSamples = 0;
-
-#ifdef DBUG_LOAD
-    printf("Loading spins from %s\n", filename);
-#endif
-
-    float *h_spinlist = loadSpins(filename, &Nbits);
-    if (h_spinlist == NULL){
+    int Nbits = 0, numSamples = 0;
+    float *h_spinList = loadSpins(filename, &Nbits);
+    if (h_spinList == NULL){
         printf("Exiting.\n");
 	return 0;	   
     }
-    //numSamples = Nbits / N_v;
-
-#ifdef DBUG_LOAD
-    printf("Spins loaded!\n");
-#endif
+    numSamples = Nbits / N_v;
 
     Layer visible, hidden;
-
     float *h_W, *d_W;
     float *h_modelCorrelations, *d_modelCorrelations, *d_random;
     float *h_dataCorrelations, *d_dataCorrelations;
     //For Sampling data distribution
     float *d_hiddenGivenData, *d_hiddenEnergy, *d_hiddenRandom;
-     
-#ifdef DBUG
-    printf("Allocating layers\n");
-#endif
-
     allocateLayer(&visible, N_v, k);
     allocateLayer(&hidden, N_h, k);
     allocateMemory(&h_W, &d_W,
@@ -101,65 +98,79 @@ int main(int argc, char **argv){
     //initialize Weights 
     checkCudaErrors(curandGenerateNormal(rng, d_W, (size_t) N_v*N_h, 0.f, 0.05f));
    
-
-   
     //Time measurement
     cudaEvent_t start, stop;
     float time;
-    checkCudaErrors(cudaEventCreate(&start));
-    checkCudaErrors(cudaEventCreate(&stop));
-/*
-    float *h_vtest = (float *)malloc(N_v*sizeof(float)), *d_vtest;
-    for (int i=0; i < N_v; i++){
-        h_vtest[i] = ((double)rand()/(double)RAND_MAX > 0.5) ? -1.f : 1.f;
-    }
-    
-    checkCudaErrors(cudaMalloc(&d_vtest, N_v*sizeof(float)));
-    checkCudaErrors(cudaDeviceSynchronize());
-    checkCudaErrors(cudaMemcpy(d_vtest, h_vtest, N_v*sizeof(float), cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaDeviceSynchronize());
-*/
+    checkCudaErrors(cudaEventCreate(&start)); checkCudaErrors(cudaEventCreate(&stop));
 
-    float *d_initialVisible, *d_batch;
+    float *d_initialVisible, *d_batch, *h_spinPtr = h_spinList;
     checkCudaErrors(cudaMalloc(&d_initialVisible, visible.BYTES));
-    checkCudaErrors(cudaMalloc(&d_batch, visible.BYTES * batchSize)); 
-    checkCudaErrors(cudaMemcpy(d_initialVisible, h_spinlist, visible.BYTES, cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaMemcpy(d_batch, h_spinlist, visible.BYTES * batchSize, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMalloc(&d_batch, visible.BYTES * batchSize));
 
-    FILE *fpW = fopen("testW.dat", "w");
-    FILE *fph = fopen("testhidden.dat", "w");
-    FILE *fpv = fopen("testvisible.dat", "w");
+    //TODO: Grab random spin config to start Gibbs sampling, compute limits of batching, wrap in loop 
 
-#ifdef DBUG_LOAD
-    printf("visible.BYTES = %d\n", visible.BYTES);
-    printf("first spin configuration:\n");
-    for (int i=0; i < N_v; i++){
-	if (i % N_v == 0)
-	    fprintf(fpv, "\n");
-        fprintf(fpv, "%f\t", h_spinlist[i]);
-    } 
-#endif 
-
+    //Start timer
     checkCudaErrors(cudaEventRecord(start, 0));
-    computeK_Gibbs(visible, hidden, d_W, d_initialVisible, d_random, cublasHandle, rng);
-    computeModelCorrelations(visible, hidden, d_modelCorrelations, cublasHandle);
-    computeDataCorrelations(d_dataCorrelations, d_W, d_batch, d_hiddenRandom, d_hiddenGivenData, 
-		            d_hiddenEnergy, N_v, N_h, batchSize, cublasHandle, rng);
+
+    dim3 blocks(ceil((float) (N_v * N_h)/(float) THREADS_PER), 1, 1);
+    dim3 threads(THREADS_PER, 1, 1);
+
+    for (int i = 0; i < numSamples/batchSize; i++){ 
+        int startGibbs = ceil((rand()/(float)RAND_MAX) * numSamples);
+        checkCudaErrors(cudaMemcpy(d_initialVisible, h_spinList + N_v*startGibbs, 
+    			           visible.BYTES, cudaMemcpyHostToDevice));
+        checkCudaErrors(cudaMemcpy(d_batch, h_spinPtr, visible.BYTES * batchSize, 
+				   cudaMemcpyHostToDevice));
+        h_spinPtr += N_v * batchSize;
+        computeK_Gibbs(visible, hidden, d_W, d_initialVisible, d_random, cublasHandle, rng);
+        computeModelCorrelations(visible, hidden, d_modelCorrelations, cublasHandle);
+        computeDataCorrelations(d_dataCorrelations, d_W, d_batch, d_hiddenRandom, d_hiddenGivenData, 
+    		                d_hiddenEnergy, N_v, N_h, batchSize, cublasHandle, rng);
+
+	weightMatrixUpdate<<<blocks, threads>>>(d_W, d_modelCorrelations,
+		                                d_dataCorrelations, 
+			                        lr, mom, sparsity,
+			                        N_h, N_v);
+	checkCudaErrors(cudaDeviceSynchronize());
+    }
+    h_spinPtr = h_spinList;
+
+    //Stop timer
     checkCudaErrors(cudaEventRecord(stop, 0));
-    
     checkCudaErrors(cudaEventSynchronize(stop));
 
     cudaEventElapsedTime(&time, start, stop);    
     printf("Elapsed time: %f ms\n", time);
 
+    checkCudaErrors(cudaMemcpy(h_W, d_W, sizeof(float)*N_v*N_h, cudaMemcpyDeviceToHost));
+    // Save weights 
+    FILE *fp_saveW = fopen("W.dat", "w");
+    for (int i=0; i < N_v; i++){
+        fprintf(fp_saveW, "\n");
+        for (int j=0; j < N_h; j++){
+            fprintf(fp_saveW, "%f\t", h_W[IDX2F(i,j, N_v)]);
+        }
+    }
+    fclose(fp_saveW);
+
+
+#ifdef DBUG
+ 
     copyLayerDeviceToHost(&visible);
     copyLayerDeviceToHost(&hidden);
     checkCudaErrors(cudaMemcpy(h_modelCorrelations, d_modelCorrelations, 
 			       sizeof(float)*N_v*N_h, cudaMemcpyDeviceToHost));
-    checkCudaErrors(cudaMemcpy(h_W, d_W, sizeof(float)*N_v*N_h, cudaMemcpyDeviceToHost));
-
-
-#ifdef DBUG
+    
+    FILE *fpW = fopen("dbugW.dat", "w");
+    FILE *fph = fopen("dbugHidden.dat", "w");
+    FILE *fpv = fopen("dbugVisible.dat", "w");
+    
+    printf("first spin configuration:\n");
+    for (int i=0; i < N_v; i++){
+	if (i % N_v == 0)
+	    fprintf(fpv, "\n");
+        fprintf(fpv, "%f\t", h_spinList[i]);
+    }
     //printf("model correlations = ");
     for (int i=0; i < N_v; i++){
         fprintf(fpW, "\n");
@@ -218,9 +229,9 @@ int main(int argc, char **argv){
     fclose(fph);
     fclose(fpv);
 
-    //printf("\n");
 #endif
-    
+   
+    // Clean up 
     checkCudaErrors(cublasDestroy(cublasHandle));
     checkCudaErrors(curandDestroyGenerator(rng));
 
@@ -234,5 +245,18 @@ int main(int argc, char **argv){
     return EXIT_SUCCESS;
 }
 
+__global__
+void weightMatrixUpdate(float *d_W, float *d_modelCorrelations,
+		        float *d_dataCorrelations, 
+			float lr, float mom, float sparsity,
+			int N_h, int N_v){
+    int tid = threadIdx.x + blockDim.x * blockIdx.x;
+    if (tid < N_h * N_v){
+        return;
+    }
+    float dw = d_W[tid];
+    float wUpdate = (d_dataCorrelations[tid] - d_modelCorrelations[tid]);
+    d_W[tid] = mom * dw + lr * (1 - mom) * wUpdate - sparsity * fabs(dw);
+}
 
 
