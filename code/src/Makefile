@@ -7,11 +7,8 @@ FLAGS=-O3
 INC=-I/Developer/NVIDIA/CUDA-7.0/samples/common/inc/ -I. 
 LIBS=-lcurand -lcublas
 
-GPUOBJS=main.o layers.o sampleCorrelate.o
+GPUOBJS=main.o layers.o sampleCorrelate.o workingMemory.o
 OBJS=loadSpins.o
-
-#debug: FLAGS += -DDBUG -DDBUG_LOAD -DDBUG_GIBBS -DDBUG_K -g -G
-#debug: main
 
 default: main
 
@@ -26,6 +23,9 @@ layers.o: layers.cu
 
 sampleCorrelate.o: sampleCorrelate.cu
 	$(NVCC) $(FLAGS) -c sampleCorrelate.cu $(INC) $(LIBS)
+
+workingMemory.o: workingMemory.cu
+	$(NVCC) $(FLAGS) -c workingMemory.cu $(INC)
 
 main.o: main.cu
 	$(NVCC) $(FLAGS) -c main.cu $(INC) $(LIBS)
