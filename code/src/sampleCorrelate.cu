@@ -66,11 +66,12 @@ void computeGibbsSample_vhv(Layer visible, Layer hidden,
      *        N_v and N_h : numbers of visible and hidden units
      *	      handle, rng : cuBLAS handle and cuRAND random number generator 
      * */
-    float a = -2.f, beta = 0.f;//minus in a instead of in sigmoid
+    float a = -2.f, beta = 0.f;//minus in E instead of in sigmoid
     int N_v = visible.N_units, N_h = hidden.N_units;    
     float *d_visibleRandom = d_random; //just access first N_v elements
     float *d_hiddenRandom = d_random + N_v; //last N_h elements
-    dim3 blocks(ceilf((float) MAX(N_v, N_h) / (float) THREADS_PER), 1, 1);
+    dim3 hblocks(ceilf((float) N_h / (float) THREADS_PER), 1, 1);
+    dim3 vblocks(ceilf((float) N_v / (float) THREADS_PER), 1, 1);
     dim3 threads(THREADS_PER, 1, 1); 
     checkCudaErrors(curandGenerateUniform(rng, d_random, N_v+N_h));
 
@@ -79,13 +80,13 @@ void computeGibbsSample_vhv(Layer visible, Layer hidden,
 	          	   	d_visibleInitial, 1, &beta, hidden.d_energySum, 1));
     checkCudaErrors(cudaDeviceSynchronize());
     
-    _computeAndSample_P<<<blocks, threads>>>(hidden, d_hiddenRandom, N_h);
+    _computeAndSample_P<<<hblocks, threads>>>(hidden, d_hiddenRandom, N_h);
     checkCudaErrors(cudaDeviceSynchronize());
     checkCudaErrors(cublasSgemv(handle, CUBLAS_OP_N, N_v, N_h, &a, d_W, N_v, 
 			        hidden.d_samplePtr, 1, &beta, visible.d_energySum, 1));
     checkCudaErrors(cudaDeviceSynchronize());
     
-    _computeAndSample_P<<<blocks, threads>>>(visible, d_visibleRandom, N_v);
+    _computeAndSample_P<<<vblocks, threads>>>(visible, d_visibleRandom, N_v);
     checkCudaErrors(cudaDeviceSynchronize());
 }
 
@@ -116,16 +117,62 @@ __host__
 void computeModelCorrelations(Layer visible, Layer hidden,
 		              float *d_modelCorrelations, cublasHandle_t handle){
     int k = visible.kSamples, N_v = visible.N_units, N_h = hidden.N_units;
-    float *d_visiblePtr = visible.d_samples, *d_hiddenPtr = hidden.d_samples;
-    const float alpha = 1.f/((float) k);
-    for (int i = 0; i < k; i++){
-        checkCudaErrors(cublasSger(handle, N_v, N_h, &alpha, d_visiblePtr, 1, d_hiddenPtr, 1,
-                                   d_modelCorrelations, N_v));
-        d_visiblePtr += N_v;
-        d_hiddenPtr +=  N_h;
-    }    
+    //float *d_visiblePtr = visible.d_samples, *d_hiddenPtr = hidden.d_samples;
+    const float alpha = 1.f/((float) k), beta = 0.f;
+    checkCudaErrors(cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_T, 
+			        N_v, N_h, k, &alpha, visible.d_samples, N_v, 
+				hidden.d_samples, N_h, &beta, d_modelCorrelations, N_v));
 }
 
+__global__
+void _sampleH_GivenData(float *d_hiddenSample, const float *d_energySum,
+	        	const float *d_random, const int N_units){
+    /*   samples conditional probability of hidden units
+     *          d_energySum : partial energy sum for hidden layers
+     *          d_random : uniform (0,1] random numbers
+     *          N_units : Number of hidden units
+     * */
+    int tid = threadIdx.x + blockDim.x * blockIdx.x;
+    if (tid >= N_units){
+        return;
+    }
+    float P_unit_is_1 = sig(d_energySum[tid]);
+    d_hiddenSample[tid] = 2.f*((float)(P_unit_is_1 > d_random[tid]))-1.f;
+}
+
+__host__
+void computeDataCorrelations(float *d_dataCorrelations, 
+		             float *d_W, float *d_spinData, float *d_hiddenRandom, 
+			     float *d_hiddenGivenData, float *d_hiddenEnergy,
+		             const int N_v, const int N_h, const int batchSize, 
+			     cublasHandle_t handle, curandGenerator_t rng){
+    
+    float *d_tempPtr = d_spinData;
+    dim3 blocks(ceilf((float) N_h / (float) THREADS_PER), 1, 1);
+    dim3 threads(THREADS_PER, 1, 1); 
+    float a = -2.f, beta = 0.f, alpha = 1.f/((float)batchSize); //minus in E instead of in sigmoid
+    for (int i = 0; i < batchSize; i++){
+        checkCudaErrors(curandGenerateUniform(rng, d_hiddenRandom, N_h));
+        checkCudaErrors(cublasSgemv(handle, CUBLAS_OP_T, N_v, N_h, &a, d_W, N_v, 
+	              	   	    d_tempPtr, 1, &beta, d_hiddenEnergy, 1));
+
+	_sampleH_GivenData<<<blocks, threads>>>(d_hiddenGivenData, d_hiddenEnergy, d_hiddenRandom, N_h);
+	checkCudaErrors(cudaDeviceSynchronize());
+	//Successive rank-1 updates
+        checkCudaErrors(cublasSger(handle, N_v, N_h, &alpha, d_tempPtr, 1, d_hiddenGivenData, 1,
+                                   d_dataCorrelations, N_v));
+        d_tempPtr += N_v;
+    } 
+}
+
+// S_v = (s_i x n) visible samples
+// S_h = (s_k x n) hidden samples
+// S_v.dot(S_h.T) = (s_i x s_k) matrix
+//General matrix multiplication:
+//cublasStatus_t cublasSgemm(cublasHandle_t handle, cublasOperation_t transa, cublasOperation_t transb, 
+//                           int m, int n, int k, const float *alpha, const float *A, int lda, 
+//			     const float *B, int ldb, const float *beta, float *C, int ldc)
+//
 //NOTES:
 //Rank-1 update for v_i h_k correlation matrix
 //cublasSger(cublasHandle_t handle, int m, int n, const float *alpha, const float *x, 
