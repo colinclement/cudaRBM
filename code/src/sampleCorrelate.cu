@@ -125,8 +125,7 @@ void computeModelCorrelations(Layer visible, Layer hidden,
 }
 
 __global__
-void _sampleH_GivenData(float *d_hiddenSample, const float *d_energySum,
-	        	const float *d_random, const int N_units){
+void _sampleH_GivenData(DataCorrContainer container, const int N_units){
     /*   samples conditional probability of hidden units
      *          d_energySum : partial energy sum for hidden layers
      *          d_random : uniform (0,1] random numbers
@@ -136,30 +135,30 @@ void _sampleH_GivenData(float *d_hiddenSample, const float *d_energySum,
     if (tid >= N_units){
         return;
     }
-    float P_unit_is_1 = sig(d_energySum[tid]);
-    d_hiddenSample[tid] = 2.f*((float)(P_unit_is_1 > d_random[tid]))-1.f;
+    float P_unit_is_1 = sig(container.d_hiddenEnergy[tid]);
+    float rnd = container.d_hiddenRandom[tid];
+    container.d_hiddenGivenData[tid] = 2.f*((float)(P_unit_is_1 > rnd))-1.f;
 }
 
 __host__
 void computeDataCorrelations(float *d_dataCorrelations, 
-		             float *d_W, float *d_spinData, float *d_hiddenRandom, 
-			     float *d_hiddenGivenData, float *d_hiddenEnergy,
-		             const int N_v, const int N_h, const int batchSize, 
+		             float *d_W, DataCorrContainer container, 
 			     cublasHandle_t handle, curandGenerator_t rng){
     
-    float *d_tempPtr = d_spinData;
+    float *d_tempPtr = container.d_visibleBatch;
+    int N_v = container.N_v, N_h = container.N_h, batchSize = container.batchSize;
     dim3 blocks(ceilf((float) N_h / (float) THREADS_PER), 1, 1);
     dim3 threads(THREADS_PER, 1, 1); 
     float a = -2.f, beta = 0.f, alpha = 1.f/((float)batchSize); //minus in E instead of in sigmoid
     for (int i = 0; i < batchSize; i++){
-        checkCudaErrors(curandGenerateUniform(rng, d_hiddenRandom, N_h));
+        checkCudaErrors(curandGenerateUniform(rng, container.d_hiddenRandom, N_h));
         checkCudaErrors(cublasSgemv(handle, CUBLAS_OP_T, N_v, N_h, &a, d_W, N_v, 
-	              	   	    d_tempPtr, 1, &beta, d_hiddenEnergy, 1));
+	              	   	    d_tempPtr, 1, &beta, container.d_hiddenEnergy, 1));
 
-	_sampleH_GivenData<<<blocks, threads>>>(d_hiddenGivenData, d_hiddenEnergy, d_hiddenRandom, N_h);
+	_sampleH_GivenData<<<blocks, threads>>>(container, N_h);
 	checkCudaErrors(cudaDeviceSynchronize());
 	//Successive rank-1 updates
-        checkCudaErrors(cublasSger(handle, N_v, N_h, &alpha, d_tempPtr, 1, d_hiddenGivenData, 1,
+        checkCudaErrors(cublasSger(handle, N_v, N_h, &alpha, d_tempPtr, 1, container.d_hiddenGivenData, 1,
                                    d_dataCorrelations, N_v));
         d_tempPtr += N_v;
     } 
