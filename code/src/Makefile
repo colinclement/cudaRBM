@@ -15,8 +15,8 @@ default: main
 main: $(OBJS) $(GPUOBJS)
 	$(NVCC) $(FLAGS) -o $(EXE) $(OBJS) $(GPUOBJS) $(INC) $(LIBS)
 
-loadSpins.o: loadSpins.cc
-	$(GCC) $(FLAGS) -c loadSpins.cc
+loadSpins.o: loadSpins.cu
+	$(NVCC) $(FLAGS) -c loadSpins.cu $(INC)
 
 layers.o: layers.cu
 	$(NVCC) $(FLAGS) -c layers.cu $(INC)
