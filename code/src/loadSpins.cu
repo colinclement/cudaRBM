@@ -4,7 +4,6 @@
 #include <errno.h>
 
 #include <cuda.h>
-#include <helper_cuda.h>
 
 //#define DBUG
 
