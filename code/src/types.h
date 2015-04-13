@@ -20,4 +20,14 @@ typedef struct {
     //Partial energy
 } Layer;
 
+typedef struct {
+    int N_v, N_h, batchSize;
+    int BATCHBYTES;
+
+    float *d_hiddenRandom;
+    float *d_hiddenGivenData;
+    float *d_hiddenEnergy;
+    float *d_visibleBatch;
+} DataCorrContainer;
+
 #endif

@@ -50,4 +50,29 @@ void freeLayer(Layer newLayer){
     cudaFree(newLayer.d_energySum); newLayer.d_energySum=NULL;
 }
 
+__host__
+void allocateCorrContainer(DataCorrContainer *container, 
+		           int N_v, int N_h, int batchSize){
+    int BYTES = N_h * sizeof(float);
+    container->BATCHBYTES = N_v * batchSize * sizeof(float);
+    int BATCHBYTES = container->BATCHBYTES;
+    container->N_v = N_v; container->N_h = N_h; container->batchSize = batchSize;
+
+    checkCudaErrors(cudaMalloc((void **)&(container->d_hiddenRandom), BYTES));
+    checkCudaErrors(cudaMemset(container->d_hiddenRandom, 0, BYTES));
+    checkCudaErrors(cudaMalloc((void **)&(container->d_hiddenGivenData), BYTES));
+    checkCudaErrors(cudaMemset(container->d_hiddenGivenData, 0, BYTES));
+    checkCudaErrors(cudaMalloc((void **)&(container->d_hiddenEnergy), BYTES));
+    checkCudaErrors(cudaMemset(container->d_hiddenEnergy, 0, BYTES));
+    checkCudaErrors(cudaMalloc((void **)&(container->d_visibleBatch), BATCHBYTES));
+    checkCudaErrors(cudaMemset(container->d_visibleBatch, 0, BATCHBYTES));
+}
+
+__host__
+void freeCorrContainer(DataCorrContainer container){
+    cudaFree(container.d_hiddenRandom); container.d_hiddenRandom = NULL;
+    cudaFree(container.d_hiddenGivenData); container.d_hiddenGivenData = NULL;
+    cudaFree(container.d_hiddenEnergy); container.d_hiddenEnergy = NULL;
+    cudaFree(container.d_visibleBatch); container.d_visibleBatch = NULL;
+}
 
