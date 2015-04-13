@@ -11,7 +11,7 @@
 
 //Note this is really sig(-x)
 #define sig(x) (1.f/(1.f + expf(x)))
-#define THREADS_PER 64
+#define THREADS_PER 32
 #ifndef MIN
 #define MIN(a, b) ((a > b) ? b : a)
 #endif
@@ -73,21 +73,22 @@ void computeGibbsSample_vhv(Layer visible, Layer hidden,
     dim3 hblocks(ceilf((float) N_h / (float) THREADS_PER), 1, 1);
     dim3 vblocks(ceilf((float) N_v / (float) THREADS_PER), 1, 1);
     dim3 threads(THREADS_PER, 1, 1); 
+    cudaStream_t stream; checkCudaErrors(cublasGetStream(handle, &stream)); 
     checkCudaErrors(curandGenerateUniform(rng, d_random, N_v+N_h));
 
-    checkCudaErrors(cudaDeviceSynchronize());
+    //checkCudaErrors(cudaDeviceSynchronize());
     checkCudaErrors(cublasSgemv(handle, CUBLAS_OP_T, N_v, N_h, &a, d_W, N_v, 
 	          	   	d_visibleInitial, 1, &beta, hidden.d_energySum, 1));
-    checkCudaErrors(cudaDeviceSynchronize());
+    //checkCudaErrors(cudaDeviceSynchronize());
     
-    _computeAndSample_P<<<hblocks, threads>>>(hidden, d_hiddenRandom, N_h);
-    checkCudaErrors(cudaDeviceSynchronize());
+    _computeAndSample_P<<<hblocks, threads, 0, stream>>>(hidden, d_hiddenRandom, N_h);
+   // checkCudaErrors(cudaDeviceSynchronize());
     checkCudaErrors(cublasSgemv(handle, CUBLAS_OP_N, N_v, N_h, &a, d_W, N_v, 
 			        hidden.d_samplePtr, 1, &beta, visible.d_energySum, 1));
-    checkCudaErrors(cudaDeviceSynchronize());
+    //checkCudaErrors(cudaDeviceSynchronize());
     
-    _computeAndSample_P<<<vblocks, threads>>>(visible, d_visibleRandom, N_v);
-    checkCudaErrors(cudaDeviceSynchronize());
+    _computeAndSample_P<<<vblocks, threads, 0, stream>>>(visible, d_visibleRandom, N_v);
+    //checkCudaErrors(cudaDeviceSynchronize());
 }
 
 __host__
@@ -141,27 +142,32 @@ void _sampleH_GivenData(DataCorrContainer container, const int N_units){
 }
 
 __host__
-void computeDataCorrelations(float *d_dataCorrelations, 
+float computeDataCorrelations(float *d_dataCorrelations, 
 		             float *d_W, DataCorrContainer container, 
 			     cublasHandle_t handle, curandGenerator_t rng){
     
-    float *d_tempPtr = container.d_visibleBatch;
+    float *d_tempPtr = container.d_visibleBatch, energy = 0.f;
     int N_v = container.N_v, N_h = container.N_h, batchSize = container.batchSize;
     dim3 blocks(ceilf((float) N_h / (float) THREADS_PER), 1, 1);
-    dim3 threads(THREADS_PER, 1, 1); 
+    dim3 threads(THREADS_PER, 1, 1);
+    cudaStream_t stream; checkCudaErrors(cublasGetStream(handle, &stream)); 
     float a = -2.f, beta = 0.f, alpha = 1.f/((float)batchSize); //minus in E instead of in sigmoid
+    checkCudaErrors(cudaMemsetAsync(d_dataCorrelations, 0, N_v*N_h*sizeof(float), stream));
     for (int i = 0; i < batchSize; i++){
         checkCudaErrors(curandGenerateUniform(rng, container.d_hiddenRandom, N_h));
         checkCudaErrors(cublasSgemv(handle, CUBLAS_OP_T, N_v, N_h, &a, d_W, N_v, 
 	              	   	    d_tempPtr, 1, &beta, container.d_hiddenEnergy, 1));
-
-	_sampleH_GivenData<<<blocks, threads>>>(container, N_h);
-	checkCudaErrors(cudaDeviceSynchronize());
+	//Compute mean energy to track convergence
+	_sampleH_GivenData<<<blocks, threads, 0, stream>>>(container, N_h);
+	//checkCudaErrors(cudaDeviceSynchronize());
 	//Successive rank-1 updates
         checkCudaErrors(cublasSger(handle, N_v, N_h, &alpha, d_tempPtr, 1, container.d_hiddenGivenData, 1,
                                    d_dataCorrelations, N_v));
         d_tempPtr += N_v;
-    } 
+    }
+    checkCudaErrors(cublasSdot(handle, N_h, container.d_hiddenEnergy, 1, 
+                               container.d_hiddenGivenData, 1, &energy));
+    return energy/a; 
 }
 
 // S_v = (s_i x n) visible samples
