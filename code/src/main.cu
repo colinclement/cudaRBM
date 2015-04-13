@@ -74,19 +74,17 @@ int main(int argc, char **argv){
     numSamples = Nbits / N_v;
 
     Layer visible, hidden;
+    DataCorrContainer container;
     float *h_W, *d_W;
     float *h_modelCorrelations, *d_modelCorrelations, *d_random;
     float *h_dataCorrelations, *d_dataCorrelations;
-    //For Sampling data distribution
-    float *d_hiddenGivenData, *d_hiddenEnergy, *d_hiddenRandom;
     allocateLayer(&visible, N_v, k);
     allocateLayer(&hidden, N_h, k);
+    allocateCorrContainer(&container, N_v, N_h, batchSize);
     allocateMemory(&h_W, &d_W,
 		   &h_modelCorrelations, &d_modelCorrelations,
 		   &h_dataCorrelations, &d_dataCorrelations,
-		   &d_random, &d_hiddenRandom,
-		   &d_hiddenGivenData, &d_hiddenEnergy,
-		   N_v, N_h);
+		   &d_random, N_v, N_h);
     
     //cuBLAS init
     cublasHandle_t cublasHandle;
@@ -103,37 +101,37 @@ int main(int argc, char **argv){
     float time;
     checkCudaErrors(cudaEventCreate(&start)); checkCudaErrors(cudaEventCreate(&stop));
 
-    float *d_initialVisible, *d_batch, *h_spinPtr = h_spinList;
+    float *d_initialVisible, *h_spinPtr = h_spinList;
     checkCudaErrors(cudaMalloc(&d_initialVisible, visible.BYTES));
-    checkCudaErrors(cudaMalloc(&d_batch, visible.BYTES * batchSize));
-
-    //TODO: Grab random spin config to start Gibbs sampling, compute limits of batching, wrap in loop 
 
     //Start timer
     checkCudaErrors(cudaEventRecord(start, 0));
 
     dim3 blocks(ceil((float) (N_v * N_h)/(float) THREADS_PER), 1, 1);
     dim3 threads(THREADS_PER, 1, 1);
+    int numBatches = ceil((float) numSamples / (float) batchSize);
 
-    for (int i = 0; i < numSamples/batchSize; i++){ 
-        int startGibbs = ceil((rand()/(float)RAND_MAX) * numSamples);
-        checkCudaErrors(cudaMemcpy(d_initialVisible, h_spinList + N_v*startGibbs, 
-    			           visible.BYTES, cudaMemcpyHostToDevice));
-        checkCudaErrors(cudaMemcpy(d_batch, h_spinPtr, visible.BYTES * batchSize, 
-				   cudaMemcpyHostToDevice));
-        h_spinPtr += N_v * batchSize;
-        computeK_Gibbs(visible, hidden, d_W, d_initialVisible, d_random, cublasHandle, rng);
-        computeModelCorrelations(visible, hidden, d_modelCorrelations, cublasHandle);
-        computeDataCorrelations(d_dataCorrelations, d_W, d_batch, d_hiddenRandom, d_hiddenGivenData, 
-    		                d_hiddenEnergy, N_v, N_h, batchSize, cublasHandle, rng);
+    printf("Only doing 5 batches for profiling\n");
+    for (int ep = 0; ep < epochs; ep++){
+        for (int i = 0; i < 1; i++){ 
+            int startGibbs = ceil((rand()/(float)RAND_MAX) * numSamples);
+            checkCudaErrors(cudaMemcpy(d_initialVisible, h_spinList + N_v*startGibbs, 
+        			           visible.BYTES, cudaMemcpyHostToDevice));
+            checkCudaErrors(cudaMemcpy(container.d_visibleBatch, h_spinPtr, visible.BYTES * batchSize, 
+            			   cudaMemcpyHostToDevice));
+            h_spinPtr += MIN(N_v * batchSize, numSamples - batchSize - 1);
+            
+            computeK_Gibbs(visible, hidden, d_W, d_initialVisible, d_random, cublasHandle, rng);
+            computeModelCorrelations(visible, hidden, d_modelCorrelations, cublasHandle);
+            computeDataCorrelations(d_dataCorrelations, d_W, container, cublasHandle, rng);
 
-	weightMatrixUpdate<<<blocks, threads>>>(d_W, d_modelCorrelations,
-		                                d_dataCorrelations, 
-			                        lr, mom, sparsity,
-			                        N_h, N_v);
-	checkCudaErrors(cudaDeviceSynchronize());
+            weightMatrixUpdate<<<blocks, threads>>>(d_W, d_modelCorrelations,
+            	                                d_dataCorrelations, 
+            		                        lr, mom, sparsity, N_h, N_v);
+            checkCudaErrors(cudaDeviceSynchronize());
+        }
+        h_spinPtr = h_spinList;
     }
-    h_spinPtr = h_spinList;
 
     //Stop timer
     checkCudaErrors(cudaEventRecord(stop, 0));
@@ -235,12 +233,12 @@ int main(int argc, char **argv){
     checkCudaErrors(cublasDestroy(cublasHandle));
     checkCudaErrors(curandDestroyGenerator(rng));
 
-    freeLayer(visible); freeLayer(hidden); 
+    freeLayer(visible); freeLayer(hidden);
+    freeCorrContainer(container); 
     freeMemory(&h_W, &d_W, 
 	       &h_modelCorrelations, &d_modelCorrelations,
 	       &h_dataCorrelations, &d_dataCorrelations,
-	       &d_random, &d_hiddenRandom, 
-	       &d_hiddenGivenData, &d_hiddenEnergy);
+	       &d_random);
 
     return EXIT_SUCCESS;
 }
