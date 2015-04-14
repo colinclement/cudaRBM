@@ -112,7 +112,6 @@ int main(int argc, char **argv){
 
     FILE *fp_saveW = fopen("W.dat", "w");
 
-//#ifdef DBUG
     checkCudaErrors(cudaMemcpy(h_W, d_W, sizeof(float)*N_v*N_h, cudaMemcpyDeviceToHost));
     // Save weights 
     for (int i=0; i < N_v; i++){
@@ -121,7 +120,6 @@ int main(int argc, char **argv){
             fprintf(fp_saveW, "%f\t", h_W[IDX2F(i,j, N_v)]);
         }
     } //Saving initial W
-//#endif
 
     //Time measurement
     cudaEvent_t start, stop;
@@ -150,35 +148,30 @@ int main(int argc, char **argv){
 	    checkCudaErrors(cudaDeviceSynchronize());
         int randIndex = (int)( ((float)rand()/(RAND_MAX))*numSamples);
 	    int startGibbs = MAX(1, N_v * MIN(numSamples-1, randIndex)) - 1;
-        printf("Ep = %d, batch = %d, startState = %d\n", ep, i, startGibbs);
-        
+	    h_spinPtr = &(h_spinList[N_v * MIN(batchSize*i, numSamples-batchSize-1)]);
+        //Memcpy 
         checkCudaErrors(cudaMemcpyAsync(d_initialVisible, &(h_spinList[startGibbs]), 
         			                    visible.BYTES, cudaMemcpyHostToDevice, stream1));
 	    checkCudaErrors(cudaMemcpyAsync(container.d_visibleBatch, h_spinPtr,
                                         container.BATCHBYTES, cudaMemcpyHostToDevice, stream2));
-	    //checkCudaErrors(cublasSasum(cublasHandle1, N_v*N_h, d_previousWstep, 1, &stepL1));
-
+        //Model correlations
         computeK_Gibbs(visible, hidden, d_W, d_initialVisible, d_random, cublasHandle1, rng1);
         computeModelCorrelations(visible, hidden, d_modelCorrelations, cublasHandle1);
-        
+        //Data correlations
         computeDataCorrelations(d_dataCorrelations, d_W, container, cublasHandle2, rng2);
+        //Track convergence
         checkCudaErrors(cublasSdot(cublasHandle2, N_h, container.d_hiddenEnergy, 1,
 		                container.d_hiddenGivenData, 1, &energy));
         fprintf(fpConv, "%f\n", energy/(-2.f));
-            
-	    //Wait for both to finish before updating weight matrix 
+        //Update weights
         checkCudaErrors(cudaStreamSynchronize(stream1)); checkCudaErrors(cudaStreamSynchronize(stream2));
-
 	    weightMatrixUpdate<<<blocks, threads, 0, stream1>>>(d_W, d_previousWstep,
 		                                                    d_modelCorrelations, d_dataCorrelations, 
             		                                        lr, mom, sparsity, batchSize, N_v, N_h);
-	    checkCudaErrors(cudaDeviceSynchronize());
-	    h_spinPtr = &(h_spinList[N_v * MIN(batchSize*i, numSamples-batchSize-1)]);
+        }
     }
-	fflush(fpConv);
-    }
-  
     checkCudaErrors(cudaDeviceSynchronize()); checkCudaErrors(cudaGetLastError());
+  
     //Stop timer
     checkCudaErrors(cudaEventRecord(stop, 0));
     checkCudaErrors(cudaEventSynchronize(stop));
@@ -330,6 +323,7 @@ int main(int argc, char **argv){
 	       h_modelCorrelations, d_modelCorrelations,
 	       h_dataCorrelations, d_dataCorrelations,
 	       d_random);
+    checkCudaErrors(cudaDeviceSynchronize()); checkCudaErrors(cudaGetLastError());
 
     return EXIT_SUCCESS;
 }
