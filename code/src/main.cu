@@ -32,7 +32,7 @@ __global__
 void weightMatrixUpdate(float *d_W, float *d_previousWstep, 
 		        float *d_modelCorrelations, float *d_dataCorrelations, 
 			float lr, float mom, float sparsity,
-			int batchSize, int N_h, int N_v);
+			int batchSize, int N_v, int N_h);
 
 int main(int argc, char **argv){
 
@@ -148,13 +148,14 @@ int main(int argc, char **argv){
         for (int i = 0; i < numBatches; i++){
 
 	    checkCudaErrors(cudaDeviceSynchronize());
-	    int startGibbs = MIN(numSamples-1, (int) ceil((rand()/(float)RAND_MAX) * numSamples));
-        int batchPos = N_v * MIN(batchSize*i, numSamples-batchSize-1);
+        int randIndex = (int)( ((float)rand()/(RAND_MAX))*numSamples);
+	    int startGibbs = MAX(1, N_v * MIN(numSamples-1, randIndex)) - 1;
+        printf("Ep = %d, batch = %d, startState = %d\n", ep, i, startGibbs);
         
-        checkCudaErrors(cudaMemcpyAsync(d_initialVisible, &(h_spinList[N_v*startGibbs]), 
+        checkCudaErrors(cudaMemcpyAsync(d_initialVisible, &(h_spinList[startGibbs]), 
         			                    visible.BYTES, cudaMemcpyHostToDevice, stream1));
-	    checkCudaErrors(cudaMemcpyAsync(container.d_visibleBatch, h_spinPtr, visible.BYTES * batchSize, 
-            			                cudaMemcpyHostToDevice, stream2));
+	    checkCudaErrors(cudaMemcpyAsync(container.d_visibleBatch, h_spinPtr,
+                                        container.BATCHBYTES, cudaMemcpyHostToDevice, stream2));
 	    //checkCudaErrors(cublasSasum(cublasHandle1, N_v*N_h, d_previousWstep, 1, &stepL1));
 
         computeK_Gibbs(visible, hidden, d_W, d_initialVisible, d_random, cublasHandle1, rng1);
@@ -170,9 +171,8 @@ int main(int argc, char **argv){
 
 	    weightMatrixUpdate<<<blocks, threads, 0, stream1>>>(d_W, d_previousWstep,
 		                                                    d_modelCorrelations, d_dataCorrelations, 
-            		                                        lr, mom, sparsity, batchSize, N_h, N_v);
+            		                                        lr, mom, sparsity, batchSize, N_v, N_h);
 	    checkCudaErrors(cudaDeviceSynchronize());
-        printf("Ep = %d, batch = %d, startState = %d, batchPos = %d\n", ep, i, startGibbs, batchPos);
 	    h_spinPtr = &(h_spinList[N_v * MIN(batchSize*i, numSamples-batchSize-1)]);
     }
 	fflush(fpConv);
@@ -339,9 +339,9 @@ void weightMatrixUpdate(float *d_W, float *d_previousWstep,
 		        float *d_modelCorrelations,
 		        float *d_dataCorrelations, 
 			float lr, float mom, float sparsity,
-			int batchSize, int N_h, int N_v){
+			int batchSize, int N_v, int N_h){
     int tid = threadIdx.x + blockDim.x * blockIdx.x;
-    if (tid >= N_h * N_v){
+    if (tid >= N_v * N_h){
         return;
     }
     float W = d_W[tid];
