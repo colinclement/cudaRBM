@@ -2,10 +2,17 @@ NVCC=nvcc
 GCC=g++
 EXE=curbm
 SRC=main.cu loadSpins.cc
-FLAGS=-O3 
-#Location of helper_cuda.h
-INC=-I/Developer/NVIDIA/CUDA-7.0/samples/common/inc -I. 
+FLAGS=-O3 -use_fast_math 
 LIBS=-lcurand -lcublas
+
+#Location of helper_cuda.h
+HOST=$(shell hostname)
+ifeq ($(HOST), spicable.lassp.cornell.edu)
+INC=-I/Developer/NVIDIA/CUDA-7.0/samples/common/inc -I. 
+else #ifeq($(HOST), dain)
+INC=-I/opt/cuda5.5/samples/common/inc -I.
+endif
+
 
 GPUOBJS=main.o layers.o sampleCorrelate.o workingMemory.o
 OBJS=loadSpins.o
