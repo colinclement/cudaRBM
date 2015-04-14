@@ -134,9 +134,9 @@ int main(int argc, char **argv){
     //Start timer
     checkCudaErrors(cudaEventRecord(start, 0));
 
-    dim3 blocks(ceil((float) (N_v * N_h)/(float) THREADS_PER), 1, 1);
+    dim3 blocks((int) ceil((float) (N_v * N_h)/(float) THREADS_PER), 1, 1);
     dim3 threads(THREADS_PER, 1, 1);
-    int numBatches = ceil((float) numSamples / (float) batchSize);
+    int numBatches = (int) ceil((float) numSamples / (float) batchSize);
 
     FILE *fpConv = fopen("Convergence.dat","w");
     
@@ -148,7 +148,7 @@ int main(int argc, char **argv){
         for (int i = 0; i < numBatches; i++){
 
 	    checkCudaErrors(cudaDeviceSynchronize());
-	    int startGibbs = MIN(numSamples-1, ceil((rand()/(float)RAND_MAX) * numSamples));
+	    int startGibbs = MIN(numSamples-1, (int) ceil((rand()/(float)RAND_MAX) * numSamples));
             checkCudaErrors(cudaMemcpyAsync(d_initialVisible, h_spinList + N_v*startGibbs, 
         			            visible.BYTES, cudaMemcpyHostToDevice, stream1));
 	    checkCudaErrors(cudaMemcpyAsync(container.d_visibleBatch, h_spinPtr, visible.BYTES * batchSize, 

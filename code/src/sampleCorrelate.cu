@@ -70,8 +70,8 @@ void computeGibbsSample_vhv(Layer visible, Layer hidden,
     int N_v = visible.N_units, N_h = hidden.N_units;    
     float *d_visibleRandom = d_random; //just access first N_v elements
     float *d_hiddenRandom = d_random + N_v; //last N_h elements
-    dim3 hblocks(ceilf((float) N_h / (float) THREADS_PER), 1, 1);
-    dim3 vblocks(ceilf((float) N_v / (float) THREADS_PER), 1, 1);
+    dim3 hblocks((int) ceilf((float) N_h / (float) THREADS_PER), 1, 1);
+    dim3 vblocks((int) ceilf((float) N_v / (float) THREADS_PER), 1, 1);
     dim3 threads(THREADS_PER, 1, 1); 
     cudaStream_t stream; checkCudaErrors(cublasGetStream(handle, &stream)); 
     checkCudaErrors(curandGenerateUniform(rng, d_random, N_v+N_h));
@@ -143,7 +143,7 @@ void computeDataCorrelations(float *d_dataCorrelations,
 			     cublasHandle_t handle, curandGenerator_t rng){
     float *d_tempPtr = container.d_visibleBatch;
     int N_v = container.N_v, N_h = container.N_h, batchSize = container.batchSize;
-    dim3 blocks(ceilf((float) N_h / (float) THREADS_PER), 1, 1);
+    dim3 blocks((int) ceilf((float) N_h / (float) THREADS_PER), 1, 1);
     dim3 threads(THREADS_PER, 1, 1);
     cudaStream_t stream; checkCudaErrors(cublasGetStream(handle, &stream)); 
     float a = -2.f, beta = 0.f, alpha = 1.f/((float)batchSize); //minus in E instead of in sigmoid
