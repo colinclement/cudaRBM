@@ -15,9 +15,9 @@
 #include "workingMemory.h"
 #include "types.h"
 
-#define DBUG //Save stuff to files
+//#define DBUG //Save stuff to files
 
-#define SIGN(x) ((x > 0) ? 1.f: -1.f)
+#define INVSIGN(x) ((x > 0) ? -1.f: 1.f)
 #ifndef MIN
 #define MIN(a, b) ((a > b) ? b : a)
 #endif
@@ -26,7 +26,7 @@
 #endif
 #define IDX2F(i,j,ld) (((j)*(ld))+(i))
 
-#define THREADS_PER 128
+#define THREADS_PER 256
 
 __global__
 void weightMatrixUpdate(float *d_W, float *d_previousWstep, 
@@ -65,7 +65,8 @@ int main(int argc, char **argv){
     float lr = atof(argv[7]);
     float mom = atof(argv[8]);
     float sparsity = atof(argv[9]);
-  
+    printf("Learning rate = %f, momemtum = %f, sparsity = %f\n", lr, mom, sparsity);
+
     int Nbits = 0, numSamples = 0;
     float *h_spinList = loadSpins(filename, &Nbits);
     if (h_spinList == NULL){
@@ -77,6 +78,7 @@ int main(int argc, char **argv){
     Layer visible, hidden;
     DataCorrContainer container;
     float *h_W, *d_W, *d_previousWstep;
+    //float  stepL1;
     float *h_modelCorrelations, *d_modelCorrelations, *d_random;
     float *h_dataCorrelations, *d_dataCorrelations;
     allocateLayer(&visible, N_v, k);
@@ -92,8 +94,7 @@ int main(int argc, char **argv){
     checkCudaErrors(cudaStreamCreate(&stream2)); 
     //cuBLAS init
     cublasHandle_t cublasHandle1, cublasHandle2;
-    checkCudaErrors(cublasCreate(&cublasHandle1));
-    checkCudaErrors(cublasCreate(&cublasHandle2));
+    checkCudaErrors(cublasCreate(&cublasHandle1)); checkCudaErrors(cublasCreate(&cublasHandle2));
     checkCudaErrors(cublasSetStream(cublasHandle1, stream1));
     checkCudaErrors(cublasSetStream(cublasHandle2, stream2));
     //cuRAND init
@@ -110,6 +111,8 @@ int main(int argc, char **argv){
     checkCudaErrors(curandGenerateNormal(rng1, d_W, (size_t) N_v*N_h, 0.f, stdDev));
 
     FILE *fp_saveW = fopen("W.dat", "w");
+
+//#ifdef DBUG
     checkCudaErrors(cudaMemcpy(h_W, d_W, sizeof(float)*N_v*N_h, cudaMemcpyDeviceToHost));
     // Save weights 
     for (int i=0; i < N_v; i++){
@@ -118,10 +121,11 @@ int main(int argc, char **argv){
             fprintf(fp_saveW, "%f\t", h_W[IDX2F(i,j, N_v)]);
         }
     } //Saving initial W
+//#endif
 
     //Time measurement
     cudaEvent_t start, stop;
-    float time;
+    float time, energy;
     checkCudaErrors(cudaEventCreate(&start)); checkCudaErrors(cudaEventCreate(&stop));
 
     float *d_initialVisible, *h_spinPtr = h_spinList;
@@ -134,35 +138,43 @@ int main(int argc, char **argv){
     dim3 threads(THREADS_PER, 1, 1);
     int numBatches = ceil((float) numSamples / (float) batchSize);
 
-    //epochs = 1; numBatches = 1;
-    FILE *fpConv = fopen("meanEnergyPerBatch.dat","w");
+    FILE *fpConv = fopen("Convergence.dat","w");
     
-    //epochs = 1; numBatches = 2;
+    //epochs = 1; numBatches = 4; //For NVVP single iterations
+    //TODO: Implement PCG RNG for improved performance
 
     printf("Performing %d epochs with  %d batches\n", epochs, numBatches);
     for (int ep = 0; ep < epochs; ep++){
-        for (int i = 0; i < numBatches; i++){ 
-	    
+        for (int i = 0; i < numBatches; i++){
+
+	    checkCudaErrors(cudaDeviceSynchronize());
 	    int startGibbs = MIN(numSamples-1, ceil((rand()/(float)RAND_MAX) * numSamples));
-/*Stream1*/ checkCudaErrors(cudaMemcpyAsync(d_initialVisible, h_spinList + N_v*startGibbs, 
+            checkCudaErrors(cudaMemcpyAsync(d_initialVisible, h_spinList + N_v*startGibbs, 
         			            visible.BYTES, cudaMemcpyHostToDevice, stream1));
-/*Stream2*/ checkCudaErrors(cudaMemcpyAsync(container.d_visibleBatch, h_spinPtr, visible.BYTES * batchSize, 
+	    checkCudaErrors(cudaMemcpyAsync(container.d_visibleBatch, h_spinPtr, visible.BYTES * batchSize, 
             			            cudaMemcpyHostToDevice, stream2));
-            h_spinPtr = h_spinList + MIN(N_v * batchSize, numSamples - batchSize - 1);
-            
-/*Stream1*/ computeK_Gibbs(visible, hidden, d_W, d_initialVisible, d_random, cublasHandle1, rng1);
+	    h_spinPtr = h_spinList + N_v * MIN(batchSize*i, numSamples-batchSize-1);
+	    //checkCudaErrors(cublasSasum(cublasHandle1, N_v*N_h, d_previousWstep, 1, &stepL1));
+
+            computeK_Gibbs(visible, hidden, d_W, d_initialVisible, d_random, cublasHandle1, rng1);
             computeModelCorrelations(visible, hidden, d_modelCorrelations, cublasHandle1);
             
-/*Stream2*/ float energy = computeDataCorrelations(d_dataCorrelations, d_W, container, cublasHandle2, rng2);
-            fprintf(fpConv, "%f\n", energy); 
-            //Wait for both to finish before updating weight matrix 
-            checkCudaErrors(cudaStreamQuery(stream1)); checkCudaErrors(cudaStreamQuery(stream2));
+            computeDataCorrelations(d_dataCorrelations, d_W, container, cublasHandle2, rng2);
+            checkCudaErrors(cublasSdot(cublasHandle2, N_h, container.d_hiddenEnergy, 1,
+			               container.d_hiddenGivenData, 1, &energy));
+            fprintf(fpConv, "%f\n", energy/(-2.f));
+            
+	    //Wait for both to finish before updating weight matrix 
+            checkCudaErrors(cudaStreamSynchronize(stream1)); checkCudaErrors(cudaStreamSynchronize(stream2));
+
 	    weightMatrixUpdate<<<blocks, threads, 0, stream1>>>(d_W, d_previousWstep,
 			                                        d_modelCorrelations, d_dataCorrelations, 
             		                                        lr, mom, sparsity, batchSize, N_h, N_v);
-        }
+	}
+	fflush(fpConv);
     }
-   
+  
+    checkCudaErrors(cudaDeviceSynchronize()); checkCudaErrors(cudaGetLastError());
     //Stop timer
     checkCudaErrors(cudaEventRecord(stop, 0));
     checkCudaErrors(cudaEventSynchronize(stop));
@@ -171,6 +183,7 @@ int main(int argc, char **argv){
     cudaEventElapsedTime(&time, start, stop);    
     printf("Elapsed time: %f ms\n", time);
 
+   
     checkCudaErrors(cudaMemcpy(h_W, d_W, sizeof(float)*N_v*N_h, cudaMemcpyDeviceToHost));
     // Save weights 
     for (int i=0; i < N_v; i++){
@@ -194,13 +207,47 @@ int main(int argc, char **argv){
     FILE *fpW = fopen("dbugW.dat", "w");
     FILE *fph = fopen("dbugHidden.dat", "w");
     FILE *fpv = fopen("dbugVisible.dat", "w");
+    FILE *fpvcorr = fopen("dbugDcorrV.dat", "w");
+    FILE *fphcorr = fopen("dbugDcorrH.dat", "w");
     
-    for (int i=0; i < N_v; i++){
-	if (i % N_v == 0)
-	    fprintf(fpv, "\n");
-        fprintf(fpv, "%f\t", h_spinList[i]);
+    float *h_visibleBatch, *h_hiddenRandom, *h_hiddenEnergy, *h_hiddenGivenData;
+    h_visibleBatch = (float *)malloc(container.BATCHBYTES);
+    h_hiddenRandom = (float *)malloc(hidden.BYTES);
+    h_hiddenEnergy = (float *)malloc(hidden.BYTES);
+    h_hiddenGivenData = (float *)malloc(hidden.BYTES);
+    checkCudaErrors(cudaMemcpy(h_visibleBatch, container.d_visibleBatch, container.BATCHBYTES,
+			       cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(h_hiddenRandom, container.d_hiddenRandom, hidden.BYTES,
+			       cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(h_hiddenEnergy, container.d_hiddenEnergy, hidden.BYTES,
+			       cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(h_hiddenGivenData, container.d_hiddenGivenData, hidden.BYTES,
+			       cudaMemcpyDeviceToHost));
+
+    //For data correlations: 
+    for (int j=0; j < N_v * batchSize; j++){
+        if (j % N_v == 0)
+            fprintf(fpvcorr, "\n");
+        fprintf(fpvcorr, "%f\t", h_visibleBatch[j]);
     }
-    //printf("model correlations = ");
+    fclose(fpvcorr);
+    for (int j=0; j < N_h; j++){
+        if (j % N_h == 0)
+            fprintf(fphcorr, "\n");
+        fprintf(fphcorr, "%f\t", h_hiddenRandom[j]);
+    }
+    for (int j=0; j < N_h; j++){
+        if (j % N_h == 0)
+            fprintf(fphcorr, "\n");
+        fprintf(fphcorr, "%f\t", h_hiddenEnergy[j]);
+    }
+    for (int j=0; j < N_h * batchSize; j++){
+        if (j % N_h == 0)
+            fprintf(fphcorr, "\n");
+        fprintf(fphcorr, "%f\t", h_hiddenGivenData[j]);
+    }
+    fclose(fphcorr);
+    //For model correlations:
     for (int i=0; i < N_v; i++){
         fprintf(fpW, "\n");
         for (int j=0; j < N_h; j++){
@@ -219,46 +266,45 @@ int main(int argc, char **argv){
             fprintf(fpW, "%f\t", h_dataCorrelations[IDX2F(i,j, N_v)]);
         }
     }
-    //printf("\nHidden sample = ");
+    for (int j=0; j < N_h; j++){
+ 	if (j % N_h ==0)
+ 	    fprintf(fph, "\n");
+ 	fprintf(fph, "%f\t", hidden.h_conditionalP[j]);
+    }
+    for (int j=0; j < N_h; j++){
+	if (j % N_h ==0)
+	    fprintf(fph, "\n");
+	fprintf(fph, "%f\t", hidden.h_energySum[j]);
+    }
     int nhiddens = hidden.kSamples * N_h;
     for (int j=0; j < nhiddens; j++){
 	if (j % N_h ==0)
 	    fprintf(fph, "\n");
 	fprintf(fph, "%f\t", hidden.h_samples[j]);
     }
-    //printf("\nHidden Conditional Probability = ");
-    for (int j=0; j < N_h; j++){
-	if (j % N_h ==0)
-	    fprintf(fph, "\n");
-	fprintf(fph, "%f\t", hidden.h_conditionalP[j]);
-    }
-    //printf("\nHidden Energies = ");
-    for (int j=0; j < N_h; j++){
-	if (j % N_h ==0)
-	    fprintf(fph, "\n");
-	fprintf(fph, "%f\t", hidden.h_energySum[j]);
-    }
-    int nvisibles = visible.kSamples * N_v;
-    //printf("\nVisible sample = ");
-    for (int i=0; i < nvisibles; i++){
-	if (i % N_v == 0){
-	    fprintf(fpv, "\n");
-	}
-	fprintf(fpv, "%f\t", visible.h_samples[i]);
-    }
-    //printf("\nVisible Conditional Probability = ");
     for (int i=0; i < N_v; i++){
 	if (i % N_v == 0){
 	    fprintf(fpv, "\n");
 	}
 	fprintf(fpv, "%f\t", visible.h_conditionalP[i]);
     }
-    //printf("\nVisible energies = ");
     for (int i=0; i < N_v; i++){
 	if (i % N_v == 0){
 	    fprintf(fpv, "\n");
 	}
 	fprintf(fpv, "%f\t", visible.h_energySum[i]);
+    }
+     for (int i=0; i < N_v; i++){
+	if (i % N_v == 0)
+	    fprintf(fpv, "\n");
+        fprintf(fpv, "%f\t", h_spinList[i]);
+    }
+    int nvisibles = visible.kSamples * N_v;
+    for (int i=0; i < nvisibles; i++){
+	if (i % N_v == 0){
+	    fprintf(fpv, "\n");
+	}
+	fprintf(fpv, "%f\t", visible.h_samples[i]);
     }
     fclose(fpW);
     fclose(fph);
@@ -284,7 +330,6 @@ int main(int argc, char **argv){
     return EXIT_SUCCESS;
 }
 
-
 __global__
 void weightMatrixUpdate(float *d_W, float *d_previousWstep,
 		        float *d_modelCorrelations,
@@ -296,11 +341,10 @@ void weightMatrixUpdate(float *d_W, float *d_previousWstep,
         return;
     }
     float W = d_W[tid];
-    float lastW = d_previousWstep[tid];
+    float lastStep = d_previousWstep[tid];
     float corrDiff = (d_dataCorrelations[tid] - d_modelCorrelations[tid]);
     float CDstep = (lr / ((float) batchSize)) * corrDiff;
-    float L1step = -1.f * sparsity * SIGN(W);
-    float newStep = (1.f-mom)*CDstep + mom*lastW + L1step;
+    float newStep = (1.f-mom)*CDstep + mom*lastStep + sparsity*INVSIGN(W);
     d_previousWstep[tid] = newStep; //update previous steps
     d_W[tid] = W + newStep; 
 }

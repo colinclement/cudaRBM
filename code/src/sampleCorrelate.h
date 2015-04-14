@@ -22,8 +22,8 @@ __host__ void computeModelCorrelations(Layer visible, Layer hidden,
 
 __global__ void _sampleH_GivenData(DataCorrContainer container, const int N_units);
 
-__host__ float computeDataCorrelations(float *d_dataCorrelations, 
-		                       float *d_W, DataCorrContainer container, 
-			               cublasHandle_t handle, curandGenerator_t rng);
+__host__ void computeDataCorrelations(float *d_dataCorrelations, 
+	                              float *d_W, DataCorrContainer container, 
+				      cublasHandle_t handle, curandGenerator_t rng);
 
 #endif

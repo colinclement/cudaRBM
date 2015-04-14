@@ -4,7 +4,7 @@ EXE=curbm
 SRC=main.cu loadSpins.cc
 FLAGS=-O3 
 #Location of helper_cuda.h
-INC=-I/Developer/NVIDIA/CUDA-7.0/samples/common/inc/ -I. 
+INC=-I/Developer/NVIDIA/CUDA-7.0/samples/common/inc -I. 
 LIBS=-lcurand -lcublas
 
 GPUOBJS=main.o layers.o sampleCorrelate.o workingMemory.o
