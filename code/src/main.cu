@@ -149,28 +149,32 @@ int main(int argc, char **argv){
 
 	    checkCudaErrors(cudaDeviceSynchronize());
 	    int startGibbs = MIN(numSamples-1, (int) ceil((rand()/(float)RAND_MAX) * numSamples));
-            checkCudaErrors(cudaMemcpyAsync(d_initialVisible, h_spinList + N_v*startGibbs, 
-        			            visible.BYTES, cudaMemcpyHostToDevice, stream1));
+        int batchPos = N_v * MIN(batchSize*i, numSamples-batchSize-1);
+        
+        checkCudaErrors(cudaMemcpyAsync(d_initialVisible, &(h_spinList[N_v*startGibbs]), 
+        			                    visible.BYTES, cudaMemcpyHostToDevice, stream1));
 	    checkCudaErrors(cudaMemcpyAsync(container.d_visibleBatch, h_spinPtr, visible.BYTES * batchSize, 
-            			            cudaMemcpyHostToDevice, stream2));
-	    h_spinPtr = h_spinList + N_v * MIN(batchSize*i, numSamples-batchSize-1);
+            			                cudaMemcpyHostToDevice, stream2));
 	    //checkCudaErrors(cublasSasum(cublasHandle1, N_v*N_h, d_previousWstep, 1, &stepL1));
 
-            computeK_Gibbs(visible, hidden, d_W, d_initialVisible, d_random, cublasHandle1, rng1);
-            computeModelCorrelations(visible, hidden, d_modelCorrelations, cublasHandle1);
-            
-            computeDataCorrelations(d_dataCorrelations, d_W, container, cublasHandle2, rng2);
-            checkCudaErrors(cublasSdot(cublasHandle2, N_h, container.d_hiddenEnergy, 1,
-			               container.d_hiddenGivenData, 1, &energy));
-            fprintf(fpConv, "%f\n", energy/(-2.f));
+        computeK_Gibbs(visible, hidden, d_W, d_initialVisible, d_random, cublasHandle1, rng1);
+        computeModelCorrelations(visible, hidden, d_modelCorrelations, cublasHandle1);
+        
+        computeDataCorrelations(d_dataCorrelations, d_W, container, cublasHandle2, rng2);
+        checkCudaErrors(cublasSdot(cublasHandle2, N_h, container.d_hiddenEnergy, 1,
+		                container.d_hiddenGivenData, 1, &energy));
+        fprintf(fpConv, "%f\n", energy/(-2.f));
             
 	    //Wait for both to finish before updating weight matrix 
-            checkCudaErrors(cudaStreamSynchronize(stream1)); checkCudaErrors(cudaStreamSynchronize(stream2));
+        checkCudaErrors(cudaStreamSynchronize(stream1)); checkCudaErrors(cudaStreamSynchronize(stream2));
 
 	    weightMatrixUpdate<<<blocks, threads, 0, stream1>>>(d_W, d_previousWstep,
-			                                        d_modelCorrelations, d_dataCorrelations, 
+		                                                    d_modelCorrelations, d_dataCorrelations, 
             		                                        lr, mom, sparsity, batchSize, N_h, N_v);
-	}
+	    checkCudaErrors(cudaDeviceSynchronize());
+        printf("Ep = %d, batch = %d, startState = %d, batchPos = %d\n", ep, i, startGibbs, batchPos);
+	    h_spinPtr = &(h_spinList[N_v * MIN(batchSize*i, numSamples-batchSize-1)]);
+    }
 	fflush(fpConv);
     }
   
@@ -322,10 +326,10 @@ int main(int argc, char **argv){
 
     freeLayer(visible); freeLayer(hidden);
     freeCorrContainer(container); 
-    freeMemory(&h_W, &d_W, &d_previousWstep, 
-	       &h_modelCorrelations, &d_modelCorrelations,
-	       &h_dataCorrelations, &d_dataCorrelations,
-	       &d_random);
+    freeMemory(h_W, d_W, d_previousWstep, 
+	       h_modelCorrelations, d_modelCorrelations,
+	       h_dataCorrelations, d_dataCorrelations,
+	       d_random);
 
     return EXIT_SUCCESS;
 }

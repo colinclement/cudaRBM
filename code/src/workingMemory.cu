@@ -29,14 +29,14 @@ void allocateMemory(float **h_W, float **d_W, float **d_previousWstep,
     checkCudaErrors(cudaMemset(*d_random, 0, sizeof(float)*(N_v+N_h)));
 }
 
-void freeMemory(float **h_W, float **d_W, float **d_previousWstep,
-		float **h_modelCorrelations, float **d_modelCorrelations,
-		float **h_dataCorrelations, float **d_dataCorrelations,
-		float **d_random){
-    free(*h_W); *h_W = NULL;
-    free(*h_modelCorrelations), *h_modelCorrelations = NULL; 
+void freeMemory(float *h_W, float *d_W, float *d_previousWstep,
+		float *h_modelCorrelations, float *d_modelCorrelations,
+		float *h_dataCorrelations, float *d_dataCorrelations,
+		float *d_random){
+    free(h_W); h_W = NULL;
+    free(h_modelCorrelations), h_modelCorrelations = NULL; 
     cudaFree(d_W); cudaFree(d_random); cudaFree(d_modelCorrelations);
     cudaFree(d_dataCorrelations); cudaFree(d_previousWstep);
-    *d_W = NULL; *d_random = NULL; *d_previousWstep = NULL; 
-    *d_modelCorrelations = NULL; *d_dataCorrelations = NULL; 
+    d_W = NULL; d_random = NULL; d_previousWstep = NULL; 
+    d_modelCorrelations = NULL; d_dataCorrelations = NULL; 
 }
