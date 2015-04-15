@@ -13,7 +13,6 @@ else #ifeq($(HOST), dain)
 INC=-I/opt/cuda5.5/samples/common/inc -I.
 endif
 
-
 GPUOBJS=main.o layers.o sampleCorrelate.o workingMemory.o
 OBJS=loadSpins.o
 

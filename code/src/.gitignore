@@ -2,3 +2,4 @@ curbm
 *.o
 *~
 *.dat
+data/*
