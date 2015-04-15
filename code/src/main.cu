@@ -112,16 +112,10 @@ int main(int argc, char **argv){
 
     FILE *fp_saveW = fopen("W.dat", "w");
 
-//#ifdef DBUG
+    //Copy initial weights to device
     checkCudaErrors(cudaMemcpy(h_W, d_W, sizeof(float)*N_v*N_h, cudaMemcpyDeviceToHost));
     // Save weights 
-    for (int i=0; i < N_v; i++){
-        fprintf(fp_saveW, "\n");
-        for (int j=0; j < N_h; j++){
-            fprintf(fp_saveW, "%f\t", h_W[IDX2F(i,j, N_v)]);
-        }
-    } //Saving initial W
-//#endif
+    //#endif
 
     //Time measurement
     cudaEvent_t start, stop;
@@ -147,49 +141,51 @@ int main(int argc, char **argv){
     for (int ep = 0; ep < epochs; ep++){
         for (int i = 0; i < numBatches; i++){
 
-	    checkCudaErrors(cudaDeviceSynchronize());
-	    int startGibbs = MIN(numSamples-1, (int) ceil((rand()/(float)RAND_MAX) * numSamples));
+	checkCudaErrors(cudaDeviceSynchronize());
+	int startGibbs = MIN(numSamples-1, (int) ceil((rand()/(float)RAND_MAX) * numSamples));
         int batchPos = N_v * MIN(batchSize*i, numSamples-batchSize-1);
         
         checkCudaErrors(cudaMemcpyAsync(d_initialVisible, &(h_spinList[N_v*startGibbs]), 
-        			                    visible.BYTES, cudaMemcpyHostToDevice, stream1));
-	    checkCudaErrors(cudaMemcpyAsync(container.d_visibleBatch, h_spinPtr, visible.BYTES * batchSize, 
-            			                cudaMemcpyHostToDevice, stream2));
-	    //checkCudaErrors(cublasSasum(cublasHandle1, N_v*N_h, d_previousWstep, 1, &stepL1));
+        			        visible.BYTES, cudaMemcpyHostToDevice, stream1));
+	checkCudaErrors(cudaMemcpyAsync(container.d_visibleBatch, h_spinPtr, visible.BYTES * batchSize, 
+                                        cudaMemcpyHostToDevice, stream2));
 
         computeK_Gibbs(visible, hidden, d_W, d_initialVisible, d_random, cublasHandle1, rng1);
         computeModelCorrelations(visible, hidden, d_modelCorrelations, cublasHandle1);
         
         computeDataCorrelations(d_dataCorrelations, d_W, container, cublasHandle2, rng2);
         checkCudaErrors(cublasSdot(cublasHandle2, N_h, container.d_hiddenEnergy, 1,
-		                container.d_hiddenGivenData, 1, &energy));
+		                   container.d_hiddenGivenData, 1, &energy));
         fprintf(fpConv, "%f\n", energy/(-2.f));
             
-	    //Wait for both to finish before updating weight matrix 
         checkCudaErrors(cudaStreamSynchronize(stream1)); checkCudaErrors(cudaStreamSynchronize(stream2));
-
-	    weightMatrixUpdate<<<blocks, threads, 0, stream1>>>(d_W, d_previousWstep,
-		                                                    d_modelCorrelations, d_dataCorrelations, 
-            		                                        lr, mom, sparsity, batchSize, N_h, N_v);
-	    checkCudaErrors(cudaDeviceSynchronize());
+	weightMatrixUpdate<<<blocks, threads, 0, stream1>>>(d_W, d_previousWstep,
+	                                                    d_modelCorrelations, d_dataCorrelations, 
+                                                            lr, mom, sparsity, batchSize, N_h, N_v);
+	checkCudaErrors(cudaDeviceSynchronize());
         printf("Ep = %d, batch = %d, startState = %d, batchPos = %d\n", ep, i, startGibbs, batchPos);
 	    h_spinPtr = &(h_spinList[N_v * MIN(batchSize*i, numSamples-batchSize-1)]);
+        }
     }
-	fflush(fpConv);
-    }
+    fclose(fpConv);
   
     checkCudaErrors(cudaDeviceSynchronize()); checkCudaErrors(cudaGetLastError());
     //Stop timer
     checkCudaErrors(cudaEventRecord(stop, 0));
     checkCudaErrors(cudaEventSynchronize(stop));
-    fclose(fpConv);
 
     cudaEventElapsedTime(&time, start, stop);    
     printf("Elapsed time: %f ms\n", time);
 
-   
+    //Save initial weights
+    for (int i=0; i < N_v; i++){
+        fprintf(fp_saveW, "\n");
+        for (int j=0; j < N_h; j++){
+            fprintf(fp_saveW, "%f\t", h_W[IDX2F(i,j, N_v)]);
+        }
+    } 
     checkCudaErrors(cudaMemcpy(h_W, d_W, sizeof(float)*N_v*N_h, cudaMemcpyDeviceToHost));
-    // Save weights 
+    // Save final weights 
     for (int i=0; i < N_v; i++){
         fprintf(fp_saveW, "\n");
         for (int j=0; j < N_h; j++){
