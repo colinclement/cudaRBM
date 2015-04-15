@@ -114,11 +114,10 @@ __host__
 void computeModelCorrelations(Layer visible, Layer hidden,
 		              float *d_modelCorrelations, cublasHandle_t handle){
     int k = visible.kSamples, N_v = visible.N_units, N_h = hidden.N_units;
-    //float *d_visiblePtr = visible.d_samples, *d_hiddenPtr = hidden.d_samples;
     const float alpha = 1.f/((float) k), beta = 0.f;
     checkCudaErrors(cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_T, 
 			        N_v, N_h, k, &alpha, visible.d_samples, N_v, 
-				hidden.d_samples, N_h, &beta, d_modelCorrelations, N_v));
+				    hidden.d_samples, N_h, &beta, d_modelCorrelations, N_v));
 }
 
 __global__
@@ -151,8 +150,8 @@ void computeDataCorrelations(float *d_dataCorrelations,
     for (int i = 0; i < batchSize; i++){
         checkCudaErrors(curandGenerateUniform(rng, container.d_hiddenRandom, N_h));
         checkCudaErrors(cublasSgemv(handle, CUBLAS_OP_T, N_v, N_h, &a, d_W, N_v, 
-	              	   	    d_tempPtr, 1, &beta, container.d_hiddenEnergy, 1));
-	_sampleH_GivenData<<<blocks, threads, 0, stream>>>(container, N_h);
+	                    	   	    d_tempPtr, 1, &beta, container.d_hiddenEnergy, 1));
+        _sampleH_GivenData<<<blocks, threads, 0, stream>>>(container, N_h);
         checkCudaErrors(cublasSger(handle, N_v, N_h, &alpha, d_tempPtr, 1, container.d_hiddenGivenData, 1,
                                    d_dataCorrelations, N_v));
         d_tempPtr += N_v;
