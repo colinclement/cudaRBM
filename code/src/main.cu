@@ -113,7 +113,7 @@ int main(int argc, char **argv){
 
     //Time measurement
     cudaEvent_t start, stop;
-    float time, energy;
+    float time, stepL1;
     checkCudaErrors(cudaEventCreate(&start)); 
     checkCudaErrors(cudaEventCreate(&stop));
     checkCudaErrors(cudaEventRecord(start, 0));
@@ -144,19 +144,14 @@ int main(int argc, char **argv){
                       cublasHandle1, rng1);
         computeCorrelations(visibleModel, hiddenModel, d_modelCorrelations,
                             cublasHandle1);
-        //Check errors
-	checkCudaErrors(cudaDeviceSynchronize());
 
         computeGibbsGivenData(visibleData, hiddenData, d_W, cublasHandle2, 
                               rng2); 
         computeCorrelations(visibleData, hiddenData, d_dataCorrelations,
                             cublasHandle2);
-        //Check errors
-	checkCudaErrors(cudaDeviceSynchronize());
 
-        checkCudaErrors(cublasSdot(cublasHandle2, N_h, hiddenData.d_energySum, 1,
-		                hiddenData.d_samples + (k-1)*N_h, 1, &energy));
-        fprintf(fpConv, "%f\n", energy/(-2.f));
+        checkCudaErrors(cublasSasum(cublasHandle1, N_h*N_v, d_previousWstep, 1, &stepL1));
+	fprintf(fpConv, "%f\n", stepL1);
         //Update weights
         checkCudaErrors(cudaStreamSynchronize(stream1)); 
         checkCudaErrors(cudaStreamSynchronize(stream2));
