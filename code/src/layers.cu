@@ -12,6 +12,8 @@ void copyLayerDeviceToHost(Layer unitLayer){
 	            unitLayer.BYTES, cudaMemcpyDeviceToHost));
     checkCudaErrors(cudaMemcpy(unitLayer.h_energySum, unitLayer.d_energySum, 
 	            unitLayer.BYTES, cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(unitLayer.h_random, unitLayer.d_random, 
+	            unitLayer.BYTES, cudaMemcpyDeviceToHost));
 }
 
 __host__
@@ -28,6 +30,8 @@ Layer allocateLayer(int N_units, int numSamples){
     memset(newLayer.h_conditionalP, 0, BYTES);
     newLayer.h_energySum = (float *)malloc(BYTES);
     memset(newLayer.h_energySum, 0, BYTES);
+    newLayer.h_random = (float *)malloc(BYTES);
+    memset(newLayer.h_random, 0, BYTES);
   
     checkCudaErrors(cudaMalloc((void **)&newLayer.d_samples, newLayer.SAMPLEBYTES));
     checkCudaErrors(cudaMemset(newLayer.d_samples, 0, newLayer.SAMPLEBYTES));
@@ -60,5 +64,6 @@ void freeLayer(Layer newLayer){
     cudaFree(newLayer.d_conditionalP); newLayer.d_conditionalP=NULL;
     free(newLayer.h_energySum); newLayer.h_energySum=NULL;
     cudaFree(newLayer.d_energySum); newLayer.d_energySum=NULL;
+    free(newLayer.h_random); newLayer.h_random = NULL;
 }
 

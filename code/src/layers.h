@@ -4,7 +4,7 @@
 #include "types.h"
 
 __host__
-void copyLayerDeviceToHost(Layer *unitLater);
+void copyLayerDeviceToHost(Layer unitLater);
 
 __host__
 Layer allocateLayer(int N_units, int numSamples);
