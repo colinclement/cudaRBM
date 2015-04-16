@@ -6,7 +6,7 @@ typedef struct {
     
     float *h_samples, *d_samples, *d_samplePtr;
     
-    float *d_random; //for sampling 
+    float *h_random, *d_random; //for sampling 
     float *h_conditionalP, *d_conditionalP;
     float *h_energySum, *d_energySum;
 } Layer;
