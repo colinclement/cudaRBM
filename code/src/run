@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+./curbm ../../data/L_32_T_2-45_binary.dat 1024 64 1 1 10 0.1 0.5 0.0001
