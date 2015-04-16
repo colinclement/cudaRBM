@@ -98,19 +98,8 @@ void computeCorrelations(Layer visible, Layer hidden,
 }
 
 
+//TODO: Investigate function pointers for improved modularity in transitioning to CRBM
 
-// S_v = (s_i x n) visible samples
-// S_h = (s_k x n) hidden samples
-// S_v.dot(S_h.T) = (s_i x s_k) matrix
-//General matrix multiplication:
-//cublasStatus_t cublasSgemm(cublasHandle_t handle, cublasOperation_t transa, cublasOperation_t transb, 
-//                           int m, int n, int k, const float *alpha, const float *A, int lda, 
-//			     const float *B, int ldb, const float *beta, float *C, int ldc)
-//
-//NOTES:
-//Rank-1 update for v_i h_k correlation matrix
-//cublasSger(cublasHandle_t handle, int m, int n, const float *alpha, const float *x, 
-//           int incx, const float *y, int incy, float *A, int lda)
 //TODO: Consider updating weight matrix in place (probabably a lot more efficient).
 //      Also consider concurrent updating and sampling.
 
