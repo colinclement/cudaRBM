@@ -15,7 +15,7 @@
 #include "workingMemory.h"
 #include "types.h"
 
-//#define DBUG //Save stuff to files
+#define DBUG //Save stuff to files
 
 #define INVSIGN(x) ((x > 0) ? -1.f: 1.f)
 #ifndef MIN
@@ -123,7 +123,7 @@ int main(int argc, char **argv){
     int numBatches = (int) ceil((float) numSamples / (float) batchSize);
     FILE *fpConv = fopen("Convergence.dat","w");
     
-    //epochs = 1; numBatches = 4; //For NVVP single iterations
+    //epochs = 1; numBatches = 1; //For NVVP single iterations
     //TODO: Implement PCG RNG for improved performance
 
     printf("Performing %d epochs with  %d batches\n", epochs, numBatches);
@@ -132,7 +132,6 @@ int main(int argc, char **argv){
         checkCudaErrors(cudaDeviceSynchronize());
         int randIndex = (int)( ((float)rand()/(RAND_MAX))*numSamples);
         int startGibbs = MAX(1, N_v * MIN(numSamples-1, randIndex)) - 1;
-        
         updateLayerSample(visibleModel, &(h_spinList[startGibbs]),
                           visibleModel.BYTES, stream1); 
         
@@ -145,11 +144,15 @@ int main(int argc, char **argv){
                       cublasHandle1, rng1);
         computeCorrelations(visibleModel, hiddenModel, d_modelCorrelations,
                             cublasHandle1);
+        //Check errors
+	checkCudaErrors(cudaDeviceSynchronize());
 
         computeGibbsGivenData(visibleData, hiddenData, d_W, cublasHandle2, 
                               rng2); 
         computeCorrelations(visibleData, hiddenData, d_dataCorrelations,
                             cublasHandle2);
+        //Check errors
+	checkCudaErrors(cudaDeviceSynchronize());
 
         checkCudaErrors(cublasSdot(cublasHandle2, N_h, hiddenData.d_energySum, 1,
 		                hiddenData.d_samples + (k-1)*N_h, 1, &energy));
@@ -158,7 +161,7 @@ int main(int argc, char **argv){
         checkCudaErrors(cudaStreamSynchronize(stream1)); 
         checkCudaErrors(cudaStreamSynchronize(stream2));
         weightMatrixUpdate<<<blocks, threads, 0, stream1>>>(d_W, d_previousWstep,
- 	                                                        d_modelCorrelations, d_dataCorrelations, 
+ 	                                                    d_modelCorrelations, d_dataCorrelations, 
                                                             lr, mom, sparsity, batchSize, N_v, N_h);
         }
     }
@@ -191,10 +194,10 @@ int main(int argc, char **argv){
 
 #ifdef DBUG
  
-    copyLayerDeviceToHost(&visibleModel);
-    copyLayerDeviceToHost(&hiddenModel);
-    copyLayerDeviceToHost(&visibleData);
-    copyLayerDeviceToHost(&hiddenData);
+    copyLayerDeviceToHost(visibleModel);
+    copyLayerDeviceToHost(hiddenModel);
+    copyLayerDeviceToHost(visibleData);
+    copyLayerDeviceToHost(hiddenData);
     checkCudaErrors(cudaMemcpy(h_modelCorrelations, d_modelCorrelations, 
 			       sizeof(float)*N_v*N_h, cudaMemcpyDeviceToHost));
     checkCudaErrors(cudaMemcpy(h_dataCorrelations, d_dataCorrelations, 
@@ -207,26 +210,26 @@ int main(int argc, char **argv){
     FILE *fphcorr = fopen("dbugDcorrH.dat", "w");
    
     //For data correlations: 
-    for (int j=0; j < N_v * batchSize; j++){
+    for (int j=0; j < N_v * visibleData.numSamples; j++){
         if (j % N_v == 0)
             fprintf(fpvcorr, "\n");
-        fprintf(fpvcorr, "%f\t", visibleData.d_samples[j]);
+        fprintf(fpvcorr, "%f\t", visibleData.h_samples[j]);
     }
     fclose(fpvcorr);
     for (int j=0; j < N_h; j++){
         if (j % N_h == 0)
             fprintf(fphcorr, "\n");
-        fprintf(fphcorr, "%f\t", hiddenData.d_random[j]);
+        fprintf(fphcorr, "%f\t", hiddenData.h_random[j]);
     }
     for (int j=0; j < N_h; j++){
         if (j % N_h == 0)
             fprintf(fphcorr, "\n");
-        fprintf(fphcorr, "%f\t", hiddenData.d_energySum[j]);
+        fprintf(fphcorr, "%f\t", hiddenData.h_energySum[j]);
     }
-    for (int j=0; j < N_h * batchSize; j++){
+    for (int j=0; j < N_h * hiddenData.numSamples; j++){
         if (j % N_h == 0)
             fprintf(fphcorr, "\n");
-        fprintf(fphcorr, "%f\t", hiddenData.d_samples[j]);
+        fprintf(fphcorr, "%f\t", hiddenData.h_samples[j]);
     }
     fclose(fphcorr);
     //For model correlations:
@@ -258,7 +261,7 @@ int main(int argc, char **argv){
 	    fprintf(fph, "\n");
 	fprintf(fph, "%f\t", hiddenModel.h_energySum[j]);
     }
-    int nhiddens = hidden.kSamples * N_h;
+    int nhiddens = hiddenModel.numSamples * N_h;
     for (int j=0; j < nhiddens; j++){
 	if (j % N_h ==0)
 	    fprintf(fph, "\n");
@@ -281,7 +284,7 @@ int main(int argc, char **argv){
 	    fprintf(fpv, "\n");
         fprintf(fpv, "%f\t", h_spinList[i]);
     }
-    int nvisibles = visible.kSamples * N_v;
+    int nvisibles = visibleModel.numSamples * N_v;
     for (int i=0; i < nvisibles; i++){
 	if (i % N_v == 0){
 	    fprintf(fpv, "\n");
@@ -325,7 +328,7 @@ void weightMatrixUpdate(float *d_W, float *d_previousWstep,
     }
     float W = d_W[tid];
     float lastStep = d_previousWstep[tid];
-    float corrDiff = (d_dataCorrelations[tid] - d_modelCorrelations[tid]);
+    float corrDiff = d_dataCorrelations[tid] - d_modelCorrelations[tid];
     float CDstep = (lr / ((float) batchSize)) * corrDiff;
     float newStep = (1.f-mom)*CDstep + mom*lastStep + sparsity*INVSIGN(W);
     d_previousWstep[tid] = newStep; //update previous steps
