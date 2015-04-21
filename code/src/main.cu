@@ -123,7 +123,7 @@ int main(int argc, char **argv){
     int numBatches = (int) ceil((float) numSamples / (float) batchSize);
     FILE *fpConv = fopen("Convergence.dat","w");
     
-    //epochs = 1; numBatches = 1; //For NVVP single iterations
+    //epochs = 1; numBatches = 4; //For NVVP single iterations
     //TODO: Implement PCG RNG for improved performance
 
     printf("Performing %d epochs with  %d batches\n", epochs, numBatches);

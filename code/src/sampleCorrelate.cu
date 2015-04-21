@@ -31,7 +31,7 @@ void sampleConditional(Layer unitLayer, const int N_units){
         return;
     }
     float P_unit_is_1 = sig(unitLayer.d_energySum[tid]);
-    unitLayer.d_conditionalP[tid] = P_unit_is_1;
+    //unitLayer.d_conditionalP[tid] = P_unit_is_1;
     float rnd = unitLayer.d_random[tid]; 
     unitLayer.d_samplePtr[tid] = 2.f*((float)(P_unit_is_1 > rnd))-1.f;
 }
@@ -50,7 +50,7 @@ void computeGibbsSample(Layer sampleLayer, Layer givenLayer,
     dim3 threads(THREADS_PER, 1, 1);
     checkCudaErrors(cublasSgemv(handle, OP, N_v, N_h, &a, d_W, N_v, 
 	          	   	givenLayer.d_samplePtr, 1, &beta, 
-                                sampleLayer.d_energySum, 1));
+                    sampleLayer.d_energySum, 1));
     sampleConditional<<<blocks, threads, 0, stream>>>(sampleLayer, sN);
 }
 
