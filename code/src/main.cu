@@ -13,9 +13,10 @@
 #include "layers.h"
 #include "sampleCorrelate.h"
 #include "workingMemory.h"
+#include "energyFunctions.h"
 #include "types.h"
 
-#define DBUG //Save stuff to files
+//#define DBUG //Save stuff to files
 
 #define INVSIGN(x) ((x > 0) ? -1.f: 1.f)
 #ifndef MIN
@@ -87,7 +88,7 @@ int main(int argc, char **argv){
 		   &h_modelCorrelations, &d_modelCorrelations,
 		   &h_dataCorrelations, &d_dataCorrelations,
 		   &d_random, N_v, N_h);
-   
+    
     cudaStream_t stream1, stream2;
     checkCudaErrors(cudaStreamCreate(&stream1));
     checkCudaErrors(cudaStreamCreate(&stream2)); 
@@ -140,24 +141,26 @@ int main(int argc, char **argv){
         updateLayerSample(visibleData, h_batchPtr, 
                           visibleData.SAMPLEBYTES, stream2);
 
-        computeKGibbs(visibleModel, hiddenModel, d_W, d_random, 
-                      cublasHandle1, rng1);
+        computeKGibbs(visibleModel, hiddenModel, d_W, allToAll, 
+                      d_random, rng1, stream1, cublasHandle1);
         computeCorrelations(visibleModel, hiddenModel, d_modelCorrelations,
                             cublasHandle1);
 
-        computeGibbsGivenData(visibleData, hiddenData, d_W, cublasHandle2, 
-                              rng2); 
+        computeGibbsGivenData(visibleData, hiddenData, d_W, allToAll,
+                              rng2, stream2, cublasHandle2);
         computeCorrelations(visibleData, hiddenData, d_dataCorrelations,
                             cublasHandle2);
 
         checkCudaErrors(cublasSasum(cublasHandle1, N_h*N_v, d_previousWstep, 1, &stepL1));
-	fprintf(fpConv, "%f\n", stepL1);
+	    fprintf(fpConv, "%f\n", stepL1);
         //Update weights
         checkCudaErrors(cudaStreamSynchronize(stream1)); 
         checkCudaErrors(cudaStreamSynchronize(stream2));
-        weightMatrixUpdate<<<blocks, threads, 0, stream1>>>(d_W, d_previousWstep,
- 	                                                    d_modelCorrelations, d_dataCorrelations, 
-                                                            lr, mom, sparsity, batchSize, N_v, N_h);
+
+        weightMatrixUpdate<<<blocks, threads,
+                             0,    stream1>>>(d_W, d_previousWstep,
+ 	                                          d_modelCorrelations, d_dataCorrelations, 
+                                              lr, mom, sparsity, batchSize, N_v, N_h);
         }
     }
     checkCudaErrors(cudaDeviceSynchronize()); checkCudaErrors(cudaGetLastError());
