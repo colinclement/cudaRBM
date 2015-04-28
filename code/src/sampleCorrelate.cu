@@ -38,30 +38,21 @@ void sampleConditional(Layer unitLayer, const int N_units){
 
 __host__
 void computeGibbsSample(Layer sampleLayer, Layer givenLayer,
-                        const float *d_W, energyFunc energy,
+                        Connection conn, energyFunc energy,
                         cudaStream_t stream, cublasHandle_t handle){
                         //cudaStream_t stream, cublasHandle_t handle){
     // Sample state of sampleLayer given state of givenLayer
     // NOTE: Assumes visible Layer has MORE units than hidden Layer!!!
     int sN = sampleLayer.N_units;
-    //float a = -2.f, beta = 0.f;//minus in E instead of in sigmoid
-    //int N_v = MAX(sN, gN), N_h = MIN(sN, gN);
-    //cublasOperation_t OP = ((sN > gN) ? CUBLAS_OP_N : CUBLAS_OP_T);
     dim3 blocks((int) ceilf((float) sN / (float) THREADS_PER), 1, 1);
     dim3 threads(THREADS_PER, 1, 1);
-    //Can put energy functional here
-    //Energy functional should take two layers (sample and given),
-    //And should populate sample.d_energySum
-    //checkCudaErrors(cublasSgemv(handle, OP, N_v, N_h, &a, d_W, N_v, 
-	//          	   	givenLayer.d_samplePtr, 1, &beta, 
-    //                sampleLayer.d_energySum, 1));
-    energy(sampleLayer, givenLayer, d_W, stream, handle);
+    energy(sampleLayer, givenLayer, conn, stream, handle);
     sampleConditional<<<blocks, threads, 0, stream>>>(sampleLayer, sN);
 }
 
 __host__
 void computeKGibbs(Layer visible, Layer hidden,
-                   const float *d_W, energyFunc energy, 
+                   Connection conn, energyFunc energy, 
                    float *d_random, curandGenerator_t rng,
                    cudaStream_t stream, cublasHandle_t handle){
     int N_v = visible.N_units, N_h = hidden.N_units;    
@@ -70,9 +61,9 @@ void computeKGibbs(Layer visible, Layer hidden,
         checkCudaErrors(curandGenerateUniform(rng, d_random, N_v+N_h));
         visible.d_random = d_random; hidden.d_random = d_random + N_v;
         hidden.d_samplePtr = hidden.d_samples + i * N_h;
-        computeGibbsSample(hidden, visible, d_W, energy, stream, handle);
+        computeGibbsSample(hidden, visible, conn, energy, stream, handle);
         visible.d_samplePtr = visible.d_samples + i * N_v;
-        computeGibbsSample(visible, hidden, d_W, energy, stream, handle);
+        computeGibbsSample(visible, hidden, conn, energy, stream, handle);
     } 
     visible.d_samplePtr = visible.d_samples;//Reset moving pointer
     hidden.d_samplePtr = hidden.d_samples;
@@ -80,7 +71,7 @@ void computeKGibbs(Layer visible, Layer hidden,
 
 __host__
 void computeGibbsGivenData(Layer visible, Layer hidden,
-                           float *d_W, energyFunc energy, 
+                           Connection conn, energyFunc energy, 
                            curandGenerator_t rng, 
                            cudaStream_t stream, cublasHandle_t handle){
     int N_v = visible.N_units, N_h = hidden.N_units;    
@@ -88,7 +79,7 @@ void computeGibbsGivenData(Layer visible, Layer hidden,
         checkCudaErrors(curandGenerateUniform(rng, hidden.d_random, N_h));
         hidden.d_samplePtr = hidden.d_samples + i * N_h;
         visible.d_samplePtr = visible.d_samples + i * N_v;
-        computeGibbsSample(hidden, visible, d_W, energy, stream, handle);
+        computeGibbsSample(hidden, visible, conn, energy, stream, handle);
     }
 }
 
@@ -101,10 +92,4 @@ void computeCorrelations(Layer visible, Layer hidden,
 			        N_v, N_h, k, &alpha, visible.d_samples, N_v, 
 				    hidden.d_samples, N_h, &beta, d_correlations, N_v));
 }
-
-
-//TODO: Investigate function pointers for improved modularity in transitioning to CRBM
-
-//TODO: Consider updating weight matrix in place (probabably a lot more efficient).
-//      Also consider concurrent updating and sampling.
 
