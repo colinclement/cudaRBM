@@ -15,21 +15,26 @@
 
 __host__
 void allToAll(Layer sampleLayer, Layer givenLayer,
-              const float *d_W, cudaStream_t stream,
+              Connection conn, cudaStream_t stream,
               cublasHandle_t handle){
-    int sN = sampleLayer.N_units, gN = givenLayer.N_units;
-    int N_v = MAX(sN, gN), N_h = MIN(sN, gN);
+    int N_v = conn.fan_in, N_h = conn.fan_out;
     float a = 1.f, beta = 0.f;
-    cublasOperation_t OP = ((sN > gN) ? CUBLAS_OP_N : CUBLAS_OP_T);
-    checkCudaErrors(cublasSgemv(handle, OP, N_v, N_h, &a, d_W, N_v, 
+    cublasOperation_t OP; 
+    OP = ((givenLayer.N_units == conn.cols) ? CUBLAS_OP_N : CUBLAS_OP_T);
+    checkCudaErrors(cublasSgemv(handle, OP, N_v, N_h, &a, conn.d_W, N_v, 
 	          	   	givenLayer.d_samplePtr, 1, &beta, 
                     sampleLayer.d_energySum, 1));
 }
 
 __host__
 void convolution(Layer sampleLayer, Layer givenLayer,
-                 const float *d_W, cudaStream_t stream,
+                 Connection conn, cudaStream_t stream,
                  cublasHandle_t handle){
+    return;
+}
+
+__global__
+void partialEnergyConvolution(Layer givenLayer, Connection conn){
     return;
 }
 
