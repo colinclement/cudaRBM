@@ -3,6 +3,8 @@
 #include "cuda.h"
 #include "cublas_v2.h"
 
+enum Filter {ALLTOALL, CONVOLUTION};
+
 typedef struct {
     int N_units, numSamples, BYTES, SAMPLEBYTES;
     
@@ -13,8 +15,21 @@ typedef struct {
     float *h_energySum, *d_energySum;
 } Layer;
 
+typedef struct {
+    int fan_in, fan_out; //N_v, N_h
+    Filter filterType;
+    int width, stride; //convolution only
+    int rows, cols; //h_W, shape
+    int FILTERBYTES; //size of h_W
+    int CORRBYTES; //Size of h_<>Correlations
+
+    float *h_W, *d_W;
+    float *h_modelCorrelations, *d_modelCorrelations;
+    float *h_dataCorrelations, *d_dataCorrelations;
+} Connection;
+
 typedef void (* energyFunc)(Layer sampleLayer, Layer givenLayer,
-                            const float *d_W, cudaStream_t stream,
+                            Connection conn, cudaStream_t stream,
                             cublasHandle_t handle);
 
 #endif

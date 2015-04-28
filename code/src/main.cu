@@ -75,19 +75,6 @@ int main(int argc, char **argv){
 	return 0;	   
     }
     numSamples = Nbits / N_v;
-
-    Layer visibleModel = allocateLayer(N_v, k);
-    Layer hiddenModel = allocateLayer(N_h, k);
-    Layer visibleData = allocateLayer(N_v, batchSize);
-    Layer hiddenData = allocateLayer(N_h, batchSize);
-    //DataCorrContainer container;
-    float *h_W, *d_W, *d_previousWstep;
-    float *h_modelCorrelations, *d_modelCorrelations, *d_random;
-    float *h_dataCorrelations, *d_dataCorrelations;
-    allocateMemory(&h_W, &d_W, &d_previousWstep,
-		   &h_modelCorrelations, &d_modelCorrelations,
-		   &h_dataCorrelations, &d_dataCorrelations,
-		   &d_random, N_v, N_h);
     
     cudaStream_t stream1, stream2;
     checkCudaErrors(cudaStreamCreate(&stream1));
@@ -106,12 +93,15 @@ int main(int argc, char **argv){
     checkCudaErrors(curandSetStream(rng2, stream2));
     checkCudaErrors(curandSetPseudoRandomGeneratorSeed(rng2, 14859ULL));
     
-    //initialize Weights
-    float stdDev = 1.f/sqrt( (float) N_h); 
-    checkCudaErrors(curandGenerateNormal(rng1, d_W, (size_t) N_v*N_h, 0.f, stdDev));
-    //Copy initial weights to device
-    checkCudaErrors(cudaMemcpy(h_W, d_W, sizeof(float)*N_v*N_h, cudaMemcpyDeviceToHost));
-
+    Layer visibleModel = allocateLayer(N_v, k);
+    Layer hiddenModel = allocateLayer(N_h, k);
+    Layer visibleData = allocateLayer(N_v, batchSize);
+    Layer hiddenData = allocateLayer(N_h, batchSize);
+    Connection conn = allocateConnection(N_v, N_h, rng1, ALLTOALL, 0, 1);
+    
+    float *d_previousWstep, *d_random; 
+    allocateMemory(&d_previousWstep, &d_random, N_v, N_h);
+    
     //Time measurement
     cudaEvent_t start, stop;
     float time, stepL1;
@@ -141,26 +131,30 @@ int main(int argc, char **argv){
         updateLayerSample(visibleData, h_batchPtr, 
                           visibleData.SAMPLEBYTES, stream2);
 
-        computeKGibbs(visibleModel, hiddenModel, d_W, allToAll, 
+        computeKGibbs(visibleModel, hiddenModel, conn, allToAll, 
                       d_random, rng1, stream1, cublasHandle1);
-        computeCorrelations(visibleModel, hiddenModel, d_modelCorrelations,
+        computeCorrelations(visibleModel, hiddenModel, conn.d_modelCorrelations,
                             cublasHandle1);
 
-        computeGibbsGivenData(visibleData, hiddenData, d_W, allToAll,
+        computeGibbsGivenData(visibleData, hiddenData, conn, allToAll,
                               rng2, stream2, cublasHandle2);
-        computeCorrelations(visibleData, hiddenData, d_dataCorrelations,
+        computeCorrelations(visibleData, hiddenData, conn.d_dataCorrelations,
                             cublasHandle2);
 
-        checkCudaErrors(cublasSasum(cublasHandle1, N_h*N_v, d_previousWstep, 1, &stepL1));
+        checkCudaErrors(cublasSasum(cublasHandle1, N_h*N_v, 
+                                    d_previousWstep, 1, &stepL1));
 	    fprintf(fpConv, "%f\n", stepL1);
         //Update weights
         checkCudaErrors(cudaStreamSynchronize(stream1)); 
         checkCudaErrors(cudaStreamSynchronize(stream2));
 
-        weightMatrixUpdate<<<blocks, threads,
-                             0,    stream1>>>(d_W, d_previousWstep,
- 	                                          d_modelCorrelations, d_dataCorrelations, 
-                                              lr, mom, sparsity, batchSize, N_v, N_h);
+        weightMatrixUpdate<<<blocks, 
+                             threads,
+                             0,
+                             stream1>>>(conn.d_W, d_previousWstep,
+ 	                                    conn.d_modelCorrelations, 
+                                        conn.d_dataCorrelations, 
+                                        lr, mom, sparsity, batchSize, N_v, N_h);
         }
     }
     checkCudaErrors(cudaDeviceSynchronize()); checkCudaErrors(cudaGetLastError());
@@ -174,18 +168,19 @@ int main(int argc, char **argv){
 
     FILE *fp_saveW = fopen("W.dat", "w");
     //Save initial weights
-    for (int i=0; i < N_v; i++){
+    for (int i=0; i < conn.rows; i++){
         fprintf(fp_saveW, "\n");
-        for (int j=0; j < N_h; j++){
-            fprintf(fp_saveW, "%f\t", h_W[IDX2F(i,j, N_v)]);
+        for (int j=0; j < conn.cols; j++){
+            fprintf(fp_saveW, "%f\t", conn.h_W[IDX2F(i,j, N_v)]);
         }
     } 
-    checkCudaErrors(cudaMemcpy(h_W, d_W, sizeof(float)*N_v*N_h, cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(conn.h_W, conn.d_W, 
+                               conn.FILTERBYTES, cudaMemcpyDeviceToHost));
     // Save final weights 
-    for (int i=0; i < N_v; i++){
+    for (int i=0; i < conn.rows; i++){
         fprintf(fp_saveW, "\n");
-        for (int j=0; j < N_h; j++){
-            fprintf(fp_saveW, "%f\t", h_W[IDX2F(i,j, N_v)]);
+        for (int j=0; j < conn.cols; j++){
+            fprintf(fp_saveW, "%f\t", conn.h_W[IDX2F(i,j, N_v)]);
         }
     }
     fclose(fp_saveW);
@@ -196,10 +191,10 @@ int main(int argc, char **argv){
     copyLayerDeviceToHost(hiddenModel);
     copyLayerDeviceToHost(visibleData);
     copyLayerDeviceToHost(hiddenData);
-    checkCudaErrors(cudaMemcpy(h_modelCorrelations, d_modelCorrelations, 
-			       sizeof(float)*N_v*N_h, cudaMemcpyDeviceToHost));
-    checkCudaErrors(cudaMemcpy(h_dataCorrelations, d_dataCorrelations, 
-			       sizeof(float)*N_v*N_h, cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(conn.h_modelCorrelations, conn.d_modelCorrelations, 
+			        conn.CORRBYTES, cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(conn.h_dataCorrelations, conn.d_dataCorrelations, 
+			        conn.CORRBYTES, cudaMemcpyDeviceToHost));
     
     FILE *fpW = fopen("dbugW.dat", "w");
     FILE *fph = fopen("dbugHidden.dat", "w");
@@ -231,22 +226,22 @@ int main(int argc, char **argv){
     }
     fclose(fphcorr);
     //For model correlations:
-    for (int i=0; i < N_v; i++){
+    for (int i=0; i < conn.rows; i++){
         fprintf(fpW, "\n");
-        for (int j=0; j < N_h; j++){
-            fprintf(fpW, "%f\t", h_W[IDX2F(i,j, N_v)]);
+        for (int j=0; j < conn.cols; j++){
+            fprintf(fpW, "%f\t", conn.h_W[IDX2F(i,j, N_v)]);
         }
     }
-    for (int i=0; i < N_v; i++){
+    for (int i=0; i < conn.fan_in; i++){
         fprintf(fpW, "\n");
-        for (int j=0; j < N_h; j++){
-            fprintf(fpW, "%f\t", h_modelCorrelations[IDX2F(i,j, N_v)]);
+        for (int j=0; j < conn.fan_out; j++){
+            fprintf(fpW, "%f\t", conn.h_modelCorrelations[IDX2F(i,j, N_v)]);
         }
     }
-    for (int i=0; i < N_v; i++){
+    for (int i=0; i < conn.fan_in; i++){
         fprintf(fpW, "\n");
-        for (int j=0; j < N_h; j++){
-            fprintf(fpW, "%f\t", h_dataCorrelations[IDX2F(i,j, N_v)]);
+        for (int j=0; j < conn.fan_out; j++){
+            fprintf(fpW, "%f\t", conn.h_dataCorrelations[IDX2F(i,j, N_v)]);
         }
     }
     for (int j=0; j < N_h; j++){
@@ -305,10 +300,8 @@ int main(int argc, char **argv){
 
     freeLayer(visibleModel); freeLayer(hiddenModel);
     freeLayer(visibleData); freeLayer(hiddenData);
-    freeMemory(h_W, d_W, d_previousWstep, 
-	       h_modelCorrelations, d_modelCorrelations,
-	       h_dataCorrelations, d_dataCorrelations,
-	       d_random);
+    freeConnection(conn);
+    freeMemory(d_previousWstep, d_random);
     checkCudaErrors(cudaDeviceSynchronize()); checkCudaErrors(cudaGetLastError());
 
     return EXIT_SUCCESS;
