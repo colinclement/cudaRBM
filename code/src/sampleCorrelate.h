@@ -3,27 +3,32 @@
 
 #include "types.h"
 
-__global__ void _computeAndSample_P(Layer unitLayer, const float *d_random,
-		         const int N_units);
+__global__
+void sampleConditional(Layer unitLayer, const int N_units);
  
-__host__ void computeGibbsSample_vhv(Layer visible, Layer hidden,
-		            const float *d_W, float *d_visibleInitial,
-			    float *d_random, cublasHandle_t handle, 
-			    curandGenerator_t rng);
- 
-__host__ void computeK_Gibbs(Layer visible, Layer hidden,
-		    const float *d_W, float *d_visibleInitial,
-		    float *d_random, cublasHandle_t handle,
-		    curandGenerator_t rng);
+ __host__
+void computeGibbsSample(Layer sampleLayer, Layer givenLayer,
+                        //const float *d_W, energyFunc energy,
+                        Connection conn, energyFunc energy,
+                        cudaStream_t stream, cublasHandle_t handle); 
+                        //cublasHandle_t handle);
 
-__host__ void computeModelCorrelations(Layer visible, Layer hidden,
-		                       float *d_modelCorrelations, 
-				       cublasHandle_t handle);
+__host__
+void computeKGibbs(Layer visible, Layer hidden,
+		           //const float *d_W, energyFunc energy,
+                   Connection conn, energyFunc energy,
+                   float *d_random, curandGenerator_t rng,
+                   cudaStream_t stream, cublasHandle_t handle);
 
-__global__ void _sampleH_GivenData(DataCorrContainer container, const int N_units);
+__host__
+void computeGibbsGivenData(Layer visible, Layer hidden,
+                           //float *d_W, energyFunc energy,
+                           Connection conn, energyFunc energy,
+                           curandGenerator_t rng,
+                           cudaStream_t stream, cublasHandle_t handle);
 
-__host__ void computeDataCorrelations(float *d_dataCorrelations, 
-	                              float *d_W, DataCorrContainer container, 
-				      cublasHandle_t handle, curandGenerator_t rng);
+__host__
+void computeCorrelations(Layer visible, Layer hidden,
+                         float *d_correlations, cublasHandle_t handle);
 
 #endif

@@ -1,33 +1,35 @@
 #ifndef __TYPES_H__
 #define __TYPES_H__
+#include "cuda.h"
+#include "cublas_v2.h"
+
+enum Filter {ALLTOALL, CONVOLUTION};
 
 typedef struct {
-    int N_units;
+    int N_units, numSamples, BYTES, SAMPLEBYTES;
     
-    float *h_samples, *d_samples;
-    // Store all K samples
-    float *d_samplePtr; 
-    //Move pointer along during sampling
-    int BYTES;
-    int SAMPLEBYTES;
-    //Size of one sample and all samples
-    int kSamples; //k
-    //Number of K samples
+    float *h_samples, *d_samples, *d_samplePtr;
     
+    float *h_random, *d_random; //for sampling 
     float *h_conditionalP, *d_conditionalP;
-    //Conditional probabilities
     float *h_energySum, *d_energySum;
-    //Partial energy
 } Layer;
 
 typedef struct {
-    int N_v, N_h, batchSize;
-    int BATCHBYTES;
+    int fan_in, fan_out; //N_v, N_h
+    Filter filterType;
+    int width, stride; //convolution only
+    int rows, cols; //h_W, shape
+    int FILTERBYTES; //size of h_W
+    int CORRBYTES; //Size of h_<>Correlations
 
-    float *d_hiddenRandom;
-    float *d_hiddenGivenData;
-    float *d_hiddenEnergy;
-    float *d_visibleBatch;
-} DataCorrContainer;
+    float *h_W, *d_W;
+    float *h_modelCorrelations, *d_modelCorrelations;
+    float *h_dataCorrelations, *d_dataCorrelations;
+} Connection;
+
+typedef void (* energyFunc)(Layer sampleLayer, Layer givenLayer,
+                            Connection conn, cudaStream_t stream,
+                            cublasHandle_t handle);
 
 #endif

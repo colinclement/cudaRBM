@@ -17,7 +17,7 @@ ifeq ($(HOST), jection)
 INC= -I$(CUDA_HOME)/samples/common/inc -I.
 endif
 
-GPUOBJS=main.o layers.o sampleCorrelate.o workingMemory.o
+GPUOBJS=main.o layers.o sampleCorrelate.o workingMemory.o energyFunctions.o
 OBJS=loadSpins.o
 
 default: main
@@ -36,6 +36,9 @@ sampleCorrelate.o: sampleCorrelate.cu
 
 workingMemory.o: workingMemory.cu
 	$(NVCC) $(FLAGS) -c workingMemory.cu $(INC)
+
+energyFunctions.o: energyFunctions.cu
+	$(NVCC) $(FLAGS) -c energyFunctions.cu $(INC)
 
 main.o: main.cu
 	$(NVCC) $(FLAGS) -c main.cu $(INC) $(LIBS)
